@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import html
 import json
+import time
 import logging
 
 import segno
@@ -110,7 +111,8 @@ def _page(title: str, body: str) -> str:
 
 
 def mount_web(app, rt: Runtime, settings: Settings) -> None:
-    from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
+    from starlette.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
+                                 Response, StreamingResponse)
     from starlette.routing import Route
 
     def _q(request) -> str:
@@ -599,18 +601,35 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
 
         async def stream():
             try:
+                # Status first, before waiting on anything, so a freshly loaded
+                # page paints the real state immediately instead of showing the
+                # server-rendered "syncing" placeholder until the first tick.
+                yield f"event: status\ndata: {json.dumps(rt.status())}\n\n"
+                last_status = time.monotonic()
                 while True:
-                    yield f"event: status\ndata: {json.dumps(rt.status())}\n\n"
                     try:
                         item = await asyncio.wait_for(q.get(), timeout=2.0)
                         yield f"event: wa\ndata: {json.dumps(item)}\n\n"
+                        # Drain the rest of the burst. Receipts arrive in
+                        # groups; emitting one per two-second tick would take
+                        # half a minute to tick a dozen messages.
+                        while not q.empty():
+                            yield f"event: wa\ndata: {json.dumps(q.get_nowait())}\n\n"
                     except asyncio.TimeoutError:
                         pass
+                    if time.monotonic() - last_status >= 2.0:
+                        last_status = time.monotonic()
+                        yield f"event: status\ndata: {json.dumps(rt.status())}\n\n"
             finally:
                 rt.unsubscribe(q)
 
-        return Response(stream(), media_type="text/event-stream",
-                        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+        # StreamingResponse, not Response. A plain Response tries to use the
+        # generator as a body and 500s — which is what this endpoint did from
+        # the day it was written, so no live update ever reached the browser
+        # and the UI appeared to work only because of its 20-second poll.
+        return StreamingResponse(stream(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-store",
+                                          "X-Accel-Buffering": "no"})
 
     for route in [
         Route("/", index),

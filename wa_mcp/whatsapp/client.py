@@ -274,6 +274,7 @@ class WhatsApp:
                     fixed = await self.store.rebuild_rollups()
                     if fixed:
                         log.info("repaired %d chat orderings", fixed)
+                    await self.propagate_read_status()
                 except Exception:
                     log.exception("post-sync repair failed")
             try:
@@ -503,6 +504,35 @@ class WhatsApp:
                 await self.store.upsert_chat_meta(chat, name=gname, is_group=True)
         except Exception:
             log.exception("group event %s", name)
+
+    async def propagate_read_status(self) -> int:
+        """Mark everything before a read message in the same chat as read.
+
+        Not a guess: opening a conversation marks it read up to that point, so
+        a later message being READ means every earlier one was too. History
+        arrives without per-message status for older entries, which left a
+        year of messages showing one grey tick beside a reply that is plainly
+        marked read — visibly wrong, and misleading to anything deciding
+        whether to follow up.
+
+        Written against the port rather than as three dialects of SQL: it runs
+        once after a sync, so clarity beats a marginal amount of speed.
+        """
+        fixed = 0
+        for chat in await self.store.list_chats(limit=5000):
+            msgs = await self.store.get_messages(chat.chat_jid, limit=500)
+            mine = [m for m in msgs if m.is_from_me]
+            newest_read = max((m.ts for m in mine if m.status in ("read", "played")),
+                              default=None)
+            if newest_read is None:
+                continue
+            behind = [m.message_id for m in mine
+                      if m.ts < newest_read and m.status in ("sent", "delivered")]
+            if behind:
+                fixed += len(await self.store.set_status(behind, "read", newest_read))
+        if fixed:
+            log.info("inferred read status for %d earlier messages", fixed)
+        return fixed
 
     async def persist_contact_names(self) -> int:
         """Write address-book names into chats.name.

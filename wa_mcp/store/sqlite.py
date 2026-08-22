@@ -16,12 +16,15 @@ Two things carry the design:
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 import aiosqlite
 
 from .base import Chat, Message, Store, now_ms, split_query, status_rank
+
+log = logging.getLogger(__name__)
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;

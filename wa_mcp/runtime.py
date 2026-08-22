@@ -56,11 +56,14 @@ class Runtime:
         self.trigger = None       # built in start(), needs the store connected
         self.oauth = None         # set by create_app when OAuth is on
         self._subscribers: list = []
+        self._have_history = False   # set in start(); see status()
 
     # ------------------------------------------------------------- lifecycle
 
     async def start(self) -> None:
         await self.store.connect()
+        # One row is enough to answer "is this a first pair or a restart?".
+        self._have_history = bool(await self.store.list_chats(limit=1))
 
         from .trigger.engine import TriggerEngine
 
@@ -111,6 +114,9 @@ class Runtime:
             self._subscribers.remove(q)
 
     async def _fanout(self, event_type: str, payload: dict) -> None:
+        if event_type in ("message.received", "message.sent"):
+            # A first pair stops being one the moment anything lands.
+            self._have_history = True
         if event_type == "message.received":
             await self._maybe_reply(payload)
         for q in list(self._subscribers):
@@ -163,6 +169,13 @@ class Runtime:
                 "backend": self.storage.backend,
                 "session_persisted_as_file": self.storage.session_is_file,
             },
+            # Whether the browser has anything to show yet, which is NOT the
+            # same question as whether the auto-reply gate has opened. History
+            # arrives once, at pair time; every later connect re-reads a store
+            # that is already full. Blocking the UI behind the 90s settle on
+            # those connects showed a "Syncing" bar over a complete, usable
+            # chat list for a minute and a half after every restart.
+            "have_local_history": self._have_history,
             "contacts_loaded": self.contacts.loaded,
             "contacts_known": len(self.contacts),
             "blocked": getattr(self.wa, "load_error", None) if self.wa else None,

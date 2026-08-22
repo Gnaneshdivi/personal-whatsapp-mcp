@@ -207,7 +207,7 @@ function ticks(status) {
   if (!status) return "";
   const blue = (status === "read" || status === "played");
   const mark = status === "sent" ? TICK_ONE : TICK_TWO;
-  return `<span class="tk${blue ? " rd" : ""}">${mark}</span>`;
+  return `<span class="tk${blue ? " rd" : ""}" data-s="${status}">${mark}</span>`;
 }
 
 /* ------------------------------------------------------------ chat list */
@@ -344,21 +344,58 @@ async function loadOlder() {
 /* ------------------------------------------------------------- live */
 
 const es = new EventSource(KA("/events"));
-es.addEventListener("status", e => {
-  const s = JSON.parse(e.data);
+function applyStatus(s) {
   $("#num").textContent = s.number || "";
   $("#pn").textContent = s.push_name || "WhatsApp";
   const me = $("#nav-profile");
   if (me && !me.dataset.set && s.number) { me.dataset.set = "1"; paintMe(); }
   $("#live").className = "dot" + (s.ready ? "" : " warn");
   const sy = $("#sync");
-  if (s.ready) { sy.style.display = "none"; }
+  // Hide it once the gate opens, and also whenever there is already a full
+  // store to read. WhatsApp only ships history at pair time, so on every
+  // restart after the first there is nothing to wait for -- the chats below
+  // are complete while this bar claims otherwise.
+  if (s.ready || s.have_local_history) { sy.style.display = "none"; }
   else {
     sy.style.display = "block";
-    sy.innerHTML = "Syncing " + (s.sync.detail || "") +
+    sy.innerHTML = "Syncing" + (s.sync.detail ? " \u2014 " + esc(s.sync.detail) : "") +
       `<div class="bar"><i style="width:${s.sync.percent||0}%"></i></div>`;
   }
-});
+}
+es.addEventListener("status", e => applyStatus(JSON.parse(e.data)));
+
+/* The stream is the fast path, not the only path. EventSource gives up
+   silently often enough — a proxy idle-timeout, a laptop waking — and when it
+   does, every one of these is driven by the poll below instead. The banner
+   sticking on "Syncing" forever after the stream dropped is exactly the bug
+   this guards against. */
+async function refreshStatus() {
+  try { applyStatus(await (await fetch(KA("/api/status"))).json()); } catch (e) {}
+}
+
+/* The sidebar is not the conversation. Reloading only the chat list is why a
+   new message showed up on the left while the open thread sat unchanged. */
+async function refreshOpen() {
+  if (!current) return;
+  const box = $("#msgs");
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  let d;
+  try {
+    d = await (await fetch(KA(`/api/messages/${encodeURIComponent(current)}?limit=20`))).json();
+  } catch (e) { return; }
+  const msgs = d.messages || [];
+  const have = new Set([...box.querySelectorAll(".m")].map(n => n.dataset.id));
+  const fresh = msgs.filter(m => !have.has(m.message_id));
+  if (fresh.length) paint(fresh, false);
+  // Ticks change without any new message arriving — someone opening the chat
+  // on their phone turns grey to blue and nothing else about the thread moves.
+  for (const m of msgs) {
+    if (!m.is_from_me) continue;
+    const n = box.querySelector(`.m[data-id="${CSS.escape(m.message_id)}"] .t .tk`);
+    if (n && n.dataset.s !== m.status) n.outerHTML = ticks(m.status);
+  }
+  if (atBottom && fresh.length) box.scrollTop = box.scrollHeight;
+}
 es.addEventListener("wa", async e => {
   const ev = JSON.parse(e.data);
   if (ev.type && ev.type.startsWith("message.") &&
@@ -483,7 +520,8 @@ async function paintMe() {
 
 loadChats();
 paintMe();                       // do not wait for the next status tick
-setInterval(loadChats, 20000);   // catches read state changed on the phone
+setInterval(() => { loadChats(); refreshOpen(); refreshStatus(); }, 15000);
+refreshStatus();   // don't wait 15s to find out we are already connected
 """
 
 
