@@ -41,7 +41,9 @@ async def client(tmp_path, monkeypatch):
 K = "?k=t0ken"
 
 # Persisted but deliberately not on the form: derived, or set by pairing.
-NOT_ON_FORM = {"webhook.prompt_template_json"}
+# The instruction is shared, so it is edited once under Model and the
+# webhook receives the same text; there is no second field for it.
+NOT_ON_FORM: set[str] = set()
 
 
 def _leaf_names(obj, prefix="") -> set[str]:
@@ -86,7 +88,7 @@ FULL = {
     "webhook": {"url": "https://e.test/hook", "method": "POST",
                 "headers": {"Authorization": "Bearer abc"},
                 "body": '{"text": "{{prompt}}"}', "reply_path": "data.reply",
-                "prompt_template": "{{message}}", "history_messages": 5},
+                "history_messages": 5, "expect_reply": True},
     "guardrails": {"context_only": True, "allow_external_knowledge": True,
                    "allowed_topics": ["orders", "delivery"],
                    "require_allowed_topic": True,

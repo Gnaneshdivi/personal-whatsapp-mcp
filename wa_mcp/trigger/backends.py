@@ -34,6 +34,7 @@ class Context:
     message_id: str
     timestamp: str
     history: list[tuple[bool, str, str]]   # (from_me, speaker, text), oldest first
+    system: str = ""                        # the shared instruction, rendered
     policy: str = ""                        # guardrails, rendered for the model
     reason: str = ""                        # only used by notification templates
 
@@ -170,17 +171,7 @@ async def reply_via_model(cfg: ModelBackend, ctx: Context,
 
     nonce = new_nonce()
     messages: list[dict[str, str]] = []
-    system = render(cfg.system_prompt, ctx)
-    # The policy goes in the system message rather than the user turn: a rule
-    # placed alongside the user's words is easier to argue with than one the
-    # model reads as its own instruction.
-    if ctx.policy:
-        system = (system + "\n\n" + ctx.policy).strip()
-    # Always present, never configurable: anyone who knows the number can send
-    # this bot text, so the boundary between data and instructions is a security
-    # control rather than a preference.
-    system = (system + "\n\n" + INJECTION_GUARD.format(nonce=nonce)).strip()
-    messages.append({"role": "system", "content": system})
+    messages.append({"role": "system", "content": compose_instruction(ctx, nonce)})
 
     # Inbound turns are all untrusted — history as much as the latest message,
     # since an attacker can seed an instruction and wait a turn for it to be
@@ -241,13 +232,65 @@ async def reply_via_model(cfg: ModelBackend, ctx: Context,
     return text.strip()
 
 
+def compose_instruction(ctx: Context, nonce: str) -> str:
+    """The instruction block both backends send, built once.
+
+    They used to be written separately — a system prompt for the model, a
+    prompt template for the webhook — and drifted immediately: the webhook's
+    was a bare transcript with no instruction at all, no guardrails and no
+    injection guard, so the same account behaved differently depending on
+    which backend happened to be selected. One function now, so a change to
+    the wording cannot apply to only one of them.
+    """
+    out = ctx.system
+    # The policy goes with the instructions, never alongside the user's words:
+    # a rule sitting next to the message is easier to argue with than one the
+    # model reads as its own.
+    if ctx.policy:
+        out = (out + "\n\n" + ctx.policy).strip()
+    # Always present, never configurable. Anyone who knows the number can send
+    # this text, so the boundary between data and instructions is a security
+    # control rather than a preference.
+    return (out + "\n\n" + INJECTION_GUARD.format(nonce=nonce)).strip()
+
+
+def guarded_history(ctx: Context, nonce: str) -> str:
+    """History with the inbound side tagged.
+
+    An attacker can seed an instruction and wait a turn for it to come back as
+    context, so the older messages need the same treatment as the newest one.
+    Our own replies are not wrapped — they are not untrusted input.
+    """
+    out = []
+    for from_me, speaker, text in ctx.history:
+        if not text:
+            continue
+        out.append(f"{speaker}: {text}" if from_me
+                   else f"{speaker}: {wrap_untrusted(text, nonce)}")
+    return "\n".join(out)
+
+
 async def reply_via_webhook(cfg: WebhookBackend, ctx: Context,
                             client: httpx.AsyncClient | None = None) -> str:
     """POST the configured body and pull the reply out of the response."""
     if not cfg.configured:
         raise BackendError("webhook backend is not configured")
 
-    prompt = render(cfg.prompt_template, ctx)
+    # The same tagging the model backend applies. Anyone who knows the number
+    # can send this text, so the boundary between instructions and data is a
+    # security control, not a preference — and it does not stop being one
+    # because the request goes out over HTTP first. A webhook pointed straight
+    # at a model API would otherwise receive raw "ignore previous instructions"
+    # with nothing marking it as somebody else's words.
+    # Identical to what the model backend sends, laid out as one string because
+    # that is all an HTTP body can carry. Instructions first, untrusted data
+    # last, exactly as the messages array orders them.
+    nonce = new_nonce()
+    prompt = compose_instruction(ctx, nonce)
+    history = guarded_history(ctx, nonce)
+    if history:
+        prompt += "\n\nConversation so far:\n" + history
+    prompt += "\n\nTheir latest message:\n" + wrap_untrusted(ctx.message, nonce)
     looks_json = cfg.body.strip().startswith(("{", "["))
     rendered = render(cfg.body, ctx, {"prompt": prompt}, json_safe=looks_json)
 
@@ -282,6 +325,11 @@ async def reply_via_webhook(cfg: WebhookBackend, ctx: Context,
     finally:
         if own:
             await client.aclose()
+
+    # Handed over. The endpoint answers in its own time, through the API, so
+    # there is nothing to parse and nothing for this server to send.
+    if not cfg.expect_reply:
+        return ""
 
     text = dig(data, cfg.reply_path) if not isinstance(data, str) else data
     if not text or not text.strip():

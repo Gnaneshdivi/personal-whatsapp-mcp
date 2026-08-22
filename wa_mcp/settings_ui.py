@@ -281,7 +281,10 @@ def build(rt, q: str, status: dict) -> str:
               "Exactly as your provider names it.")
         + row("System prompt", area("model.system_prompt", t.model.system_prompt,
                                     rows=5),
-              TOKEN_HELP, wide=True)
+              "The same instruction is sent whichever backend you pick — a "
+              "webhook receives it as the leading part of the prompt, with the "
+              "guardrails and the injection guard, then the conversation.\n\n"
+              + TOKEN_HELP, wide=True)
         + row("Turns of history to send", num_in("model.history_messages",
                                                  t.model.history_messages),
               "How much of the conversation the model sees. More context costs "
@@ -312,14 +315,20 @@ def build(rt, q: str, status: dict) -> str:
         + row("Body", area("webhook.body", t.webhook.body, rows=4),
               TOKEN_HELP + "\n\nA JSON body is escaped for you, so a message "
               "containing a quote cannot break it.", wide=True)
+        + row("Wait for the reply", toggle("webhook.expect_reply",
+                                          t.webhook.expect_reply),
+              "On: this server waits for your response and sends whatever comes "
+              "back, so your endpoint has to answer within the timeout.\n\nOff: "
+              "the message is handed over and nothing more happens here. Your "
+              "endpoint decides whether to answer and sends it itself through "
+              "the API — which is what anything queued, human-approved, or "
+              "slower than one request needs.")
         + row("Where the reply is in the response",
               text_in("webhook.reply_path", t.webhook.reply_path, "reply"),
               "A dotted path into the JSON you return — reply, or "
-              "choices.0.message.content. Leave blank if you return plain text.")
-        + row("Prompt template", area("webhook.prompt_template",
-                                      t.webhook.prompt_template, rows=3),
-              TOKEN_HELP + "\n\nRendered first, then available as {{prompt}} in "
-              "the body above.", wide=True)
+              "content.0.text for Anthropic, or choices.0.message.content for "
+              "an OpenAI-shaped one. Leave blank if you return plain text.",
+              when="webhook.expect_reply")
         + row("Turns of history to send",
               num_in("webhook.history_messages", t.webhook.history_messages), "")
         + row("Give up after (seconds)", num_in("webhook.timeout_seconds",

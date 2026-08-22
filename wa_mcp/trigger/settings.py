@@ -26,10 +26,15 @@ class ModelBackend:
     base_url: str = ""
     api_key: str = ""
     model: str = ""
+    # Sent by BOTH backends, so it says outright that the answer is the
+    # message. A webhook used to get a bare transcript with no instruction at
+    # all, and a model handed one summarises the conversation or asks what is
+    # wanted — then that answer goes to the contact verbatim.
     system_prompt: str = (
-        "You are replying on WhatsApp as {{me_name}}.\n"
-        "Keep replies short and natural — one or two sentences.\n"
-        "You are talking to {{chat_name}}."
+        "You are replying on WhatsApp as {{me_name}}, talking to {{chat_name}}.\n"
+        "Write only the message to send. It is delivered exactly as you write "
+        "it, with nothing added, so do not describe what you would say — say "
+        "it. Keep it short and natural, one or two sentences."
     )
     history_messages: int = 10
     temperature: float = 0.7
@@ -50,10 +55,11 @@ class WebhookBackend:
     headers: dict[str, str] = field(default_factory=dict)
     body: str = '{"text": "{{prompt}}", "session": "{{chat_jid}}"}'
     reply_path: str = "reply"
-    prompt_template: str = (
-        "Conversation with {{chat_name}}:\n{{history}}\n"
-        "Latest message: {{message}}"
-    )
+    # False = hand the message over and stop. Your endpoint decides whether to
+    # answer and sends it itself through the API, which is the shape anything
+    # queued, human-approved or slower than a request can be needs. True = this
+    # server waits for the response and sends whatever comes back.
+    expect_reply: bool = True
     history_messages: int = 10
     timeout_seconds: float = 30.0
 

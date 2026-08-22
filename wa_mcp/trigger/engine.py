@@ -173,6 +173,12 @@ class TriggerEngine:
 
         text = (text or "").strip()
 
+        # Fire-and-forget: the POST succeeded and the endpoint owns the reply
+        # from here. Not a failure, and not something to log as one.
+        if backend == "webhook" and not self.settings.webhook.expect_reply:
+            return self._record(Decision(False, "handed to the webhook",
+                                         backend=backend))
+
         # A handoff marker means the model decided a human is needed. Strip it
         # before anything reaches the contact — they should never see the
         # plumbing — and route the alert to whoever actually reads it.
@@ -350,7 +356,7 @@ class TriggerEngine:
             history.append((m.is_from_me, speaker, m.text))
 
         me = getattr(self.rt.wa, "push_name", "") or "me"
-        return Context(
+        ctx = Context(
             policy=s.guardrails.as_prompt(),
             message=msg.text,
             chat_name=book.display_name(msg.chat_jid, chat_name=chat.name if chat else None),
@@ -362,6 +368,10 @@ class TriggerEngine:
             timestamp=str(int(time.time())),
             history=history[-n:],
         )
+        # Rendered once, here, so the model and the webhook cannot be sent
+        # different instructions for the same account.
+        ctx.system = render(s.model.system_prompt, ctx)
+        return ctx
 
     def _record(self, d: Decision) -> Decision:
         entry = {"at": time.time(), **d.public()}

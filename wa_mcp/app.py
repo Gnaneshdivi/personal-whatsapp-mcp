@@ -540,6 +540,10 @@ async def wa_test_reply(text: str = "hello, are you there?",
             history=[(False, "Test", text)],
         )
         s = r.trigger.settings
+        from .trigger.backends import render
+
+        ctx.system = render(s.model.system_prompt, ctx)
+        ctx.policy = s.guardrails.as_prompt()
         if s.backend == "model":
             reply = await reply_via_model(s.model, ctx)
         else:
