@@ -647,6 +647,7 @@ class WhatsApp:
         """
         kind = _enum_name(ev, "Type")
         ids = [m for m in (getattr(ev, "MessageIDs", None) or [])]
+        log.debug("receipt %s for %d id(s)", kind or "<blank>", len(ids))
 
         # Delivery status. This is what lets an agent act on "they read it" —
         # a message arriving is one signal, a message being READ is a different
@@ -658,6 +659,7 @@ class WhatsApp:
             ts = to_ms(getattr(ev, "Timestamp", 0))
             moved = await self.store.set_status(ids, status, ts)
             if moved:
+                log.info("%s: %d message(s)", status, len(moved))
                 # One event per real transition, not per receipt: WhatsApp
                 # resends receipts, and an agent setting a reminder on "read"
                 # must not get three.
