@@ -294,7 +294,8 @@ def guarded_history(ctx: Context, nonce: str) -> str:
 
 
 async def reply_via_webhook(cfg: WebhookBackend, ctx: Context,
-                            client: httpx.AsyncClient | None = None) -> str:
+                            client: httpx.AsyncClient | None = None,
+                            reply_token: str = "") -> str:
     """POST the configured body and pull the reply out of the response."""
     if not cfg.configured:
         raise BackendError("webhook backend is not configured")
@@ -315,9 +316,10 @@ async def reply_via_webhook(cfg: WebhookBackend, ctx: Context,
         prompt += "\n\nConversation so far:\n" + history
     prompt += "\n\nTheir latest message:\n" + wrap_untrusted(ctx.message, nonce)
     looks_json = cfg.body.strip().startswith(("{", "["))
-    rendered = render(cfg.body, ctx, {"prompt": prompt}, json_safe=looks_json)
+    extra = {"prompt": prompt, "reply_token": reply_token}
+    rendered = render(cfg.body, ctx, extra, json_safe=looks_json)
 
-    headers = {k: render(v, ctx, {"prompt": prompt}) for k, v in (cfg.headers or {}).items()}
+    headers = {k: render(v, ctx, extra) for k, v in (cfg.headers or {}).items()}
     payload: Any = rendered
     if looks_json:
         headers.setdefault("Content-Type", "application/json")

@@ -57,6 +57,10 @@ class WebhookBackend:
     # queued, human-approved or slower than a request can be needs. True = this
     # server waits for the response and sends whatever comes back.
     expect_reply: bool = True
+    # How long the scoped token in the payload stays usable. Short, because it
+    # is handed to an agent reasoning about a message a stranger wrote; long
+    # enough that a queue or a human approving the reply still fits.
+    token_ttl_seconds: int = 300
     history_messages: int = 10
     timeout_seconds: float = 30.0
 

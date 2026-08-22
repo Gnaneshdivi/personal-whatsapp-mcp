@@ -161,7 +161,16 @@ class TriggerEngine:
             if backend == "model":
                 text = await reply_via_model(self.settings.model, ctx, self._http)
             else:
-                text = await reply_via_webhook(self.settings.webhook, ctx, self._http)
+                # Minted per delivery, not per account: whatever the agent on
+                # the other end is talked into, it can only reply here.
+                token = ""
+                if not self.settings.webhook.expect_reply:
+                    from ..delivery import mint
+
+                    token = await mint(self.rt.store, msg.chat_jid,
+                                       self.settings.webhook.token_ttl_seconds)
+                text = await reply_via_webhook(self.settings.webhook, ctx,
+                                               self._http, token)
         except BackendError as exc:
             reason = f"{backend} backend failed: {exc}"
             g = self.settings.guardrails

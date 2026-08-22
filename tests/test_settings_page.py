@@ -158,7 +158,9 @@ async def test_documented_tags_match_what_the_engine_substitutes():
     ctx = Context(message="", chat_name="", chat_jid="", sender_name="",
                   sender_jid="", me_name="", message_id="", timestamp="",
                   history=[])
-    real = set(ctx.tokens()) | {"prompt"}      # prompt is added for webhooks
+    # prompt and reply_token are passed as extras on the webhook path
+    # rather than living on Context, so they are not in tokens().
+    real = set(ctx.tokens()) | {"prompt", "reply_token"}
     documented = {t.strip("{}") for t, _ in TOKENS}
     assert documented <= real, f"documented but not substituted: {documented - real}"
     assert real <= documented, f"substituted but undocumented: {real - documented}"

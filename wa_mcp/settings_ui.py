@@ -48,6 +48,8 @@ TOKENS = [
     ("{{history}}", "Recent turns of this conversation, oldest first."),
     ("{{chat_link}}", "A wa.me link WhatsApp turns into a tap that opens the chat. "
                       "Empty for @lid senders, which carry no phone number."),
+    ("{{reply_token}}", "A token scoped to this one delivery — send in this chat only, "
+                        "expiring shortly. Only for a hand-off webhook."),
     ("{{policy}}", "Your guardrails, rendered as instructions."),
     ("{{reason}}", "Why an alert fired. Only substituted in the alert wording."),
 ]
@@ -332,6 +334,17 @@ def build(rt, q: str, status: dict) -> str:
               "content.0.text for Anthropic, or choices.0.message.content for "
               "an OpenAI-shaped one. Leave blank if you return plain text.",
               when="webhook.expect_reply")
+        + row("Reply token lifetime (seconds)",
+              num_in("webhook.token_ttl_seconds", t.webhook.token_ttl_seconds),
+              "When you hand the message over, the payload carries a token "
+              "minted for that one delivery — it can send in that one "
+              "conversation and nothing else, and it expires.\n\nThat is what "
+              "makes handing off safe: whatever a message talks your agent "
+              "into, reading other chats or messaging another number is not "
+              "something it has to refuse, it is not available.\n\nUse "
+              "{{reply_token}} in the body or a header. Keep it short; long "
+              "enough for a queue or a person to approve the reply.",
+              when="webhook.expect_reply=false")
         + row("Turns of history to send",
               num_in("webhook.history_messages", t.webhook.history_messages), "")
         + row("Give up after (seconds)", num_in("webhook.timeout_seconds",
@@ -529,7 +542,12 @@ function sync() {
       const [name, want] = cond.split("=");
       const src = document.querySelector(`[name="${name}"]`);
       if (!src) return true;
-      return src.type === "checkbox" ? src.checked : src.value === want;
+      // "name" shows while a switch is on; "name=false" while it is off.
+      // Without the negative case a row that belongs to the OFF state renders
+      // exactly when it does not apply.
+      if (src.type === "checkbox")
+        return want === "false" ? !src.checked : src.checked;
+      return src.value === want;
     });
     el.classList.toggle("hide", !on);
   }

@@ -339,8 +339,9 @@ class Auth:
 
     SKIP = ("/.well-known/", "/register", "/authorize", "/token", "/revoke")
 
-    def __init__(self, app, token: str, oauth: bool = False):
+    def __init__(self, app, token: str, oauth: bool = False, rt=None):
         self.app, self.token, self.oauth = app, token, oauth
+        self.rt = rt
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http" or not self.token:
@@ -401,8 +402,20 @@ class Auth:
                     break
 
         if not secrets.compare_digest(presented, f"Bearer {self.token}"):
-            return await _plain(send, 401, b'{"error":"unauthorized"}')
+            # A delivery token is a real credential too, just a narrow one.
+            # Without this branch the hand-off flow cannot authenticate at all
+            # when OAuth is off, and the agent gets 401 rather than the scoped
+            # access it was issued. Scope decides what it may then reach.
+            if not await self._is_delivery(presented):
+                return await _plain(send, 401, b'{"error":"unauthorized"}')
         await self.app(scope, receive, send)
+
+    async def _is_delivery(self, presented: str) -> bool:
+        if not presented.lower().startswith("bearer ") or self.rt is None:
+            return False
+        from .delivery import load
+
+        return await load(self.rt.store, presented[7:].strip()) is not None
 
 
 async def _plain(send, status: int, body: bytes) -> None:
@@ -421,9 +434,13 @@ def create_app(settings: Settings, storage: Storage):
         from .oauth import WhatsAppOAuth
 
         provider = WhatsAppOAuth(RT, base)
-        mcp.auth = provider
         RT.oauth = provider
         log.info("OAuth enabled — connectors can pair by scanning the QR")
+
+    # Assigned unconditionally, including None. `mcp` is a module-level object,
+    # so setting this only when OAuth is on leaves a provider from a previous
+    # app in place — still holding that app's runtime, and its closed store.
+    mcp.auth = provider
 
     app = mcp.http_app(
         transport="http",
@@ -456,12 +473,20 @@ def create_app(settings: Settings, storage: Storage):
 
     app.router.lifespan_context = lifespan
 
+    # Inside Auth, so the token has already been accepted as valid by the time
+    # this asks what it is allowed to do — authentication first, then what that
+    # identity may reach. Wrapped after the lifespan is set, since a plain ASGI
+    # callable has no .router for that assignment.
+    from .delivery import Scope
+
+    scoped = Scope(app, RT)
+
     if settings.auth_token:
         log.info("bearer auth enabled")
-        return Auth(app, settings.auth_token, oauth=bool(provider))
+        return Auth(scoped, settings.auth_token, oauth=bool(provider), rt=RT)
     log.warning("WA_AUTH_TOKEN is not set — this server is UNAUTHENTICATED. "
                 "Fine on localhost, never behind a tunnel.")
-    return app
+    return scoped
 
 
 # ========================================================== auto-reply
