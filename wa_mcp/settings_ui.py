@@ -281,9 +281,10 @@ def build(rt, q: str, status: dict) -> str:
               "Exactly as your provider names it.")
         + row("System prompt", area("model.system_prompt", t.model.system_prompt,
                                     rows=5),
-              "The same instruction is sent whichever backend you pick — a "
-              "webhook receives it as the leading part of the prompt, with the "
-              "guardrails and the injection guard, then the conversation.\n\n"
+              "Persona and tone. The same text is sent whichever backend you "
+              "pick.\n\nHow the reply gets delivered is added automatically and "
+              "is not yours to set here — it differs between waiting for a "
+              "reply and handing the message over, and the two are opposites.\n\n"
               + TOKEN_HELP, wide=True)
         + row("Turns of history to send", num_in("model.history_messages",
                                                  t.model.history_messages),
@@ -317,12 +318,14 @@ def build(rt, q: str, status: dict) -> str:
               "containing a quote cannot break it.", wide=True)
         + row("Wait for the reply", toggle("webhook.expect_reply",
                                           t.webhook.expect_reply),
-              "On: this server waits for your response and sends whatever comes "
-              "back, so your endpoint has to answer within the timeout.\n\nOff: "
-              "the message is handed over and nothing more happens here. Your "
-              "endpoint decides whether to answer and sends it itself through "
-              "the API — which is what anything queued, human-approved, or "
-              "slower than one request needs.")
+              "On: this server waits for your response and sends whatever "
+              "comes back, so your endpoint has to answer within the timeout.\n\n"
+              "Off: the message is handed over and nothing more happens here. "
+              "The prompt changes to match — it names the chat and tells the "
+              "agent to send the reply itself through its own WhatsApp "
+              "connector, because nothing it returns is delivered. This is what "
+              "anything queued, human-approved, or slower than one request "
+              "needs.")
         + row("Where the reply is in the response",
               text_in("webhook.reply_path", t.webhook.reply_path, "reply"),
               "A dotted path into the JSON you return — reply, or "

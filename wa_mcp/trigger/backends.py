@@ -232,7 +232,21 @@ async def reply_via_model(cfg: ModelBackend, ctx: Context,
     return text.strip()
 
 
-def compose_instruction(ctx: Context, nonce: str) -> str:
+# How the reply reaches the contact, which is not the same question in both
+# modes and must never be left to the user's system prompt to get right.
+DELIVERY_RETURN = (
+    "Write only the message to send. It is delivered exactly as you write it, "
+    "with nothing added, so do not describe what you would say — say it."
+)
+DELIVERY_SEND = (
+    "Send the reply yourself. Use your WhatsApp tool to send a message to "
+    "{chat_name} at {chat_jid} — that is the conversation this came from and "
+    "the only one you should reply in. Nothing you write in this response is "
+    "delivered to anyone; if you do not send it with the tool, nothing is sent."
+)
+
+
+def compose_instruction(ctx: Context, nonce: str, expect_reply: bool = True) -> str:
     """The instruction block both backends send, built once.
 
     They used to be written separately — a system prompt for the model, a
@@ -243,6 +257,15 @@ def compose_instruction(ctx: Context, nonce: str) -> str:
     the wording cannot apply to only one of them.
     """
     out = ctx.system
+    # Whoever is on the other end has to be told how delivery works, because
+    # the two modes are opposites: return the text and this server sends it, or
+    # send it yourself and this server sends nothing. Get it wrong in the
+    # fire-and-forget direction and the reply is simply never delivered, with
+    # no error anywhere.
+    delivery = (DELIVERY_RETURN if expect_reply else
+                DELIVERY_SEND.format(chat_name=ctx.chat_name or "them",
+                                     chat_jid=ctx.chat_jid))
+    out = (out + "\n" + delivery).strip()
     # The policy goes with the instructions, never alongside the user's words:
     # a rule sitting next to the message is easier to argue with than one the
     # model reads as its own.
@@ -286,7 +309,7 @@ async def reply_via_webhook(cfg: WebhookBackend, ctx: Context,
     # that is all an HTTP body can carry. Instructions first, untrusted data
     # last, exactly as the messages array orders them.
     nonce = new_nonce()
-    prompt = compose_instruction(ctx, nonce)
+    prompt = compose_instruction(ctx, nonce, cfg.expect_reply)
     history = guarded_history(ctx, nonce)
     if history:
         prompt += "\n\nConversation so far:\n" + history

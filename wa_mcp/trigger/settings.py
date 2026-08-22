@@ -26,15 +26,12 @@ class ModelBackend:
     base_url: str = ""
     api_key: str = ""
     model: str = ""
-    # Sent by BOTH backends, so it says outright that the answer is the
-    # message. A webhook used to get a bare transcript with no instruction at
-    # all, and a model handed one summarises the conversation or asks what is
-    # wanted — then that answer goes to the contact verbatim.
+    # Persona and tone only. How the reply gets delivered is NOT here: it
+    # differs by backend mode, and a user editing this must not be able to
+    # leave the two contradicting each other.
     system_prompt: str = (
         "You are replying on WhatsApp as {{me_name}}, talking to {{chat_name}}.\n"
-        "Write only the message to send. It is delivered exactly as you write "
-        "it, with nothing added, so do not describe what you would say — say "
-        "it. Keep it short and natural, one or two sentences."
+        "Keep replies short and natural — one or two sentences."
     )
     history_messages: int = 10
     temperature: float = 0.7
