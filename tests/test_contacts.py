@@ -113,3 +113,22 @@ async def test_load_is_repeatable(session_db):
     book = ContactBook(str(session_db))
     await book.load()
     assert await book.load() == 4
+
+
+async def test_an_empty_book_is_not_mistaken_for_a_missing_one(tmp_path):
+    """ContactBook defines __len__, so an empty one is falsy. Any caller using
+    `contacts or ContactBook(...)` silently builds a SECOND book — the client
+    then loads names into an object nobody else holds, and every chat renders
+    as a phone number while the log reports the contacts loaded fine."""
+    from wa_mcp.config import Settings
+    from wa_mcp.store.sqlite import SQLiteStore
+    from wa_mcp.whatsapp.client import WhatsApp
+
+    book = ContactBook(str(tmp_path / "session.db"))
+    assert len(book) == 0
+    assert not book                      # falsy — this is the trap
+
+    wa = WhatsApp(session_dsn=str(tmp_path / "session.db"),
+                  store=SQLiteStore(tmp_path / "app.db"),
+                  settings=Settings(), contacts=book)
+    assert wa.contacts is book, "the client built its own book instead"

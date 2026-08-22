@@ -72,7 +72,12 @@ class WhatsApp:
         self.session_dsn = session_dsn
         self.store = store
         self.settings = settings
-        self.contacts = contacts or ContactBook(session_dsn)
+        # `contacts or ContactBook(...)` is wrong: ContactBook defines
+        # __len__, so an empty one is FALSY and the caller's book gets silently
+        # replaced by a second instance. The client then loads 2,614 names into
+        # an object nobody else holds, and every chat renders as a phone number
+        # while the log cheerfully reports the contacts were loaded.
+        self.contacts = contacts if contacts is not None else ContactBook(session_dsn)
         self._on_event = on_event
 
         self.sync = SyncTracker()
@@ -215,6 +220,16 @@ class WhatsApp:
             props = DeviceProps(
                 os=self.settings.device_os,
                 platformType=DeviceProps.PlatformType.Value(self.settings.device_platform),
+                # Ask for history explicitly. The default gives a few recent
+                # days, which leaves a freshly paired install showing a chat
+                # list of empty conversations. This is a pair-time decision and
+                # cannot be revisited without unlinking.
+                requireFullSync=True,
+                historySyncConfig=DeviceProps.HistorySyncConfig(
+                    fullSyncDaysLimit=self.settings.history_days,
+                    fullSyncSizeMbLimit=self.settings.history_size_mb,
+                    storageQuotaMb=self.settings.history_size_mb,
+                ),
             )
 
         self._client = self._factory.new_client(
@@ -248,7 +263,15 @@ class WhatsApp:
     async def _settle_loop(self) -> None:
         """Drives SyncTracker.tick(), which closes a sync that never completed."""
         while not self._stopped.is_set():
+            was_ready = self.sync.state.ready
             self.sync.tick()
+            if self.sync.state.ready and not was_ready:
+                # One last read once everything has landed.
+                try:
+                    log.info("contacts: %d known after sync",
+                             await self.contacts.load())
+                except Exception:
+                    pass
             try:
                 await asyncio.wait_for(self._stopped.wait(), timeout=5)
             except asyncio.TimeoutError:
@@ -351,18 +374,103 @@ class WhatsApp:
             await self._emit("connection.paired", {"phone_jid": jid})
 
     async def _on_history(self, ev) -> None:
+        """Ingest a history chunk: past conversations and their messages.
+
+        Without this a fresh pairing shows a chat list and empty conversations
+        until someone happens to write to you — no recents, no ordering, no
+        pinned state, because every one of those comes from a message we never
+        stored. Live traffic alone cannot reconstruct it: WhatsApp sends your
+        history exactly once, here.
+        """
         data = getattr(ev, "Data", None)
         if data is None:
             return
         st = getattr(data, "syncType", None)
-        name = ""
         try:
             name = data.DESCRIPTOR.fields_by_name["syncType"].enum_type.values_by_number[st].name
         except Exception:
             name = str(st or "")
-        self.sync.history_chunk(
-            name, getattr(data, "progress", None), len(getattr(data, "conversations", []) or [])
+
+        conversations = list(getattr(data, "conversations", None) or [])
+        self.sync.history_chunk(name, getattr(data, "progress", None), len(conversations))
+
+        stored = 0
+        for conv in conversations:
+            try:
+                stored += await self._ingest_conversation(conv)
+            except Exception:
+                # One malformed conversation must not abandon the rest of the
+                # chunk — this is the only delivery of that history.
+                log.exception("history conversation failed")
+        if stored:
+            log.info("history: %d messages from %d conversations (%s)",
+                     stored, len(conversations), name.lower())
+        # whatsmeow fills its contact store while history streams in, so the
+        # book has to be re-read as it goes or every chat stays a phone number.
+        before = len(self.contacts)
+        after = await self.contacts.refresh_if_stale()
+        if after > before:
+            log.info("contacts: %d known", after)
+
+    async def _ingest_conversation(self, conv) -> int:
+        chat = await self._resolver.canonical(J.normalise(getattr(conv, "ID", "") or ""))
+        if not chat or J.is_ignorable(chat):
+            return 0
+
+        await self.store.upsert_chat_meta(
+            chat,
+            name=(getattr(conv, "name", "") or getattr(conv, "displayName", "")) or None,
+            is_group=J.is_group(chat),
+            archived=bool(getattr(conv, "archived", False)),
+            pinned=bool(getattr(conv, "pinned", 0)),
         )
+
+        newest_ts, newest_preview, newest_from_me = 0, None, False
+        count = 0
+        for item in list(getattr(conv, "messages", None) or []):
+            info = getattr(item, "message", None)
+            if info is None:
+                continue
+            key = getattr(info, "key", None)
+            body = getattr(info, "message", None)
+            if key is None or body is None:
+                continue
+            if not extract.is_content_message(body):
+                continue
+
+            msg_type = extract.message_type(body)
+            if msg_type in ("edit", "revoke"):
+                continue
+            text = extract.extract_text(body) or None
+            media = extract.media_descriptor(body)
+            ts = to_ms(getattr(info, "messageTimestamp", 0))
+            from_me = bool(getattr(key, "fromMe", False))
+            sender = J.normalise(getattr(info, "participant", "") or
+                                 (self.self_jid if from_me else chat))
+
+            if await self.store.upsert_message(Message(
+                message_id=getattr(key, "ID", "") or getattr(key, "id", ""),
+                chat_jid=chat, sender_jid=sender or None,
+                sender_name=(getattr(info, "pushName", "") or "").strip() or None,
+                is_from_me=from_me, ts=ts, type=msg_type, text=text,
+                media_meta=media or {},
+                quoted_id=extract.quoted_message_id(body),
+                raw_proto=(body.SerializeToString()
+                           if (self.settings.store_raw_proto or media) else None),
+            )):
+                count += 1
+            if ts > newest_ts:
+                newest_ts, newest_from_me = ts, from_me
+                newest_preview = text or (f"[{msg_type}]" if msg_type != "text" else None)
+
+        # One rollup per conversation rather than per message: touch_chat
+        # increments unread, and replaying history through it would invent an
+        # unread count of several hundred for a chat you have already read.
+        if newest_ts:
+            await self.store.touch_chat(chat, newest_ts, True, newest_preview)
+        unread = int(getattr(conv, "unreadCount", 0) or 0)
+        await self.store.set_unread(chat, unread)
+        return count
 
     async def _on_group(self, name: str, ev) -> None:
         """Group names nest differently on the two events that carry them."""
@@ -646,6 +754,22 @@ class WhatsApp:
                            "admin": bool(getattr(p, "IsAdmin", False))})
         return {"chat_jid": J.to_jid(chat_jid), "name": str(name), "topic": str(topic),
                 "participants": people, "participant_count": len(people)}
+
+    async def avatar_url(self, chat_jid: str) -> str | None:
+        """The profile picture URL for a chat, or None if there is not one.
+
+        Asked of WhatsApp per chat rather than bulk-fetched: most chats in a
+        list are never opened, and a request per contact at startup is both slow
+        and exactly the traffic pattern that draws rate limiting.
+        """
+        if self._client is None:
+            return None
+        try:
+            info = await self._client.get_profile_picture(self._jid(chat_jid))
+        except Exception as exc:
+            log.debug("no avatar for %s: %s", chat_jid, exc)
+            return None
+        return getattr(info, "URL", None) or getattr(info, "url", None) or None
 
     async def download_media(self, message_id: str) -> bytes | None:
         """Fetch media on demand.

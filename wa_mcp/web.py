@@ -37,12 +37,15 @@ a{color:#53bdeb;text-decoration:none}
 .row{display:flex;gap:12px;padding:11px 16px;border-bottom:1px solid #1b262d;cursor:pointer}
 .row:hover{background:#182229}
 .av{width:40px;height:40px;border-radius:50%;background:#2a3942;flex:none;display:grid;
-    place-items:center;font-weight:600;color:#8696a0;font-size:15px}
+    place-items:center;font-weight:600;color:#8696a0;font-size:15px;
+    position:relative;overflow:hidden}
+.av img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 .meta{min-width:0;flex:1}
 .nm{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pv{color:#8696a0;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .badge{background:#00a884;color:#111b21;border-radius:10px;padding:1px 7px;font-size:12px;
        font-weight:600;align-self:center}
+.pin{align-self:center;font-size:12px;opacity:.75;margin-right:4px}
 .pane{display:flex;flex-direction:column;background:#0b141a}
 .pane .hd{background:#202c33;border-bottom:1px solid #222d34}
 .msgs{flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:6px}
@@ -126,6 +129,8 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
             name = rt.contacts.display_name(c.chat_jid, chat_name=c.name)
             initial = _esc(name[:1].upper() or "?")
             badge = f'<span class="badge">{c.unread_count}</span>' if c.unread_count else ""
+            if getattr(c, "pinned", False):
+                badge = '<span class="pin">&#128204;</span>' + badge
             rows.append(
                 f'<div class="row" onclick="location=\'/c/{_esc(c.chat_jid)}{_q(request)}\'">'
                 f'<div class="av">{initial}</div><div class="meta">'
@@ -554,6 +559,50 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         return Response(path.read_bytes(), media_type=kind,
                         headers={"Cache-Control": "private, max-age=86400"})
 
+    async def avatar(request):
+        """Profile picture for a chat, fetched once and cached on disk.
+
+        A 204 is cached like a hit. Most chats have no picture, and asking
+        WhatsApp again on every page load for an answer that will not change
+        is both slow and the sort of chatter that draws rate limiting.
+        """
+        jid = request.path_params["jid"]
+        cache = data_dir() / "avatars"
+        cache.mkdir(parents=True, exist_ok=True)
+        safe = jid.replace("/", "_")
+        hit, miss = cache / f"{safe}.jpg", cache / f"{safe}.none"
+
+        if miss.exists():
+            return Response(status_code=204)
+        if hit.exists():
+            return Response(hit.read_bytes(), media_type="image/jpeg",
+                            headers={"Cache-Control": "private, max-age=86400"})
+
+        url = None
+        try:
+            if rt.wa is not None:
+                url = await rt.wa.avatar_url(jid)
+        except Exception as exc:
+            log.debug("avatar lookup %s: %s", jid, exc)
+        if not url:
+            miss.write_bytes(b"")
+            return Response(status_code=204)
+
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+                r = await c.get(url)
+            if r.status_code >= 400 or not r.content:
+                miss.write_bytes(b"")
+                return Response(status_code=204)
+            hit.write_bytes(r.content)
+        except Exception as exc:
+            log.debug("avatar fetch %s: %s", jid, exc)
+            return Response(status_code=204)
+
+        return Response(hit.read_bytes(), media_type="image/jpeg",
+                        headers={"Cache-Control": "private, max-age=86400"})
+
     async def qr_txt(request):
         qr = rt.wa.qr if rt.wa else None
         if not qr:
@@ -590,6 +639,7 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         Route("/api/test-reply", test_reply_api, methods=["POST"]),
         Route("/qr.txt", qr_txt),
         Route("/media/{mid}", media),
+        Route("/avatar/{jid}", avatar),
         Route("/events", events),
     ]:
         app.router.routes.append(route)

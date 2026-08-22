@@ -177,6 +177,13 @@ class Settings:
     # static token still works alongside it, which is what keeps localhost and
     # curl simple.
     oauth: bool = True
+    # How much history WhatsApp sends at pair time. It is delivered ONCE, on
+    # the pairing connection — a reconnect never replays it — so asking for too
+    # little here cannot be corrected later without unlinking and scanning
+    # again. 365 days is generous without being absurd; the size limit is what
+    # actually bounds it.
+    history_days: int = 365
+    history_size_mb: int = 500
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -190,6 +197,8 @@ class Settings:
             device_os=os.getenv("WA_DEVICE_OS", "Chrome"),
             device_platform=os.getenv("WA_DEVICE_PLATFORM", "CHROME"),
             oauth=_flag("WA_OAUTH", True),
+            history_days=int(os.getenv("WA_HISTORY_DAYS", "365")),
+            history_size_mb=int(os.getenv("WA_HISTORY_SIZE_MB", "500")),
         )
 
 

@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS chats (
     last_message_ts   INTEGER,
     last_message_text TEXT,
     unread_count      INTEGER NOT NULL DEFAULT 0,
-    archived          INTEGER NOT NULL DEFAULT 0
+    archived          INTEGER NOT NULL DEFAULT 0,
+    pinned            INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS ix_chats_last ON chats(last_message_ts DESC);
 
@@ -177,7 +178,8 @@ class SQLiteStore(Store):
 
     async def upsert_chat_meta(self, chat_jid: str, *, name: str | None = None,
                                is_group: bool | None = None,
-                               archived: bool | None = None) -> None:
+                               archived: bool | None = None,
+                               pinned: bool | None = None) -> None:
         sets, args = [], []
         if name is not None:
             sets.append("name = ?"); args.append(name)
@@ -185,12 +187,15 @@ class SQLiteStore(Store):
             sets.append("is_group = ?"); args.append(int(is_group))
         if archived is not None:
             sets.append("archived = ?"); args.append(int(archived))
+        if pinned is not None:
+            sets.append("pinned = ?"); args.append(int(pinned))
         if not sets:
             return
         await self.db.execute(
-            "INSERT INTO chats (chat_jid, name, is_group, archived) VALUES (?,?,?,?) "
-            "ON CONFLICT(chat_jid) DO UPDATE SET " + ", ".join(sets),
-            (chat_jid, name, int(bool(is_group)), int(bool(archived)), *args),
+            "INSERT INTO chats (chat_jid, name, is_group, archived, pinned) "
+            "VALUES (?,?,?,?,?) ON CONFLICT(chat_jid) DO UPDATE SET " + ", ".join(sets),
+            (chat_jid, name, int(bool(is_group)), int(bool(archived)),
+             int(bool(pinned)), *args),
         )
         await self.db.commit()
 
@@ -217,7 +222,7 @@ class SQLiteStore(Store):
         if query:
             sql += " AND (name LIKE ? OR chat_jid LIKE ?)"
             args += [f"%{query}%", f"%{query}%"]
-        sql += " ORDER BY last_message_ts DESC NULLS LAST LIMIT ?"
+        sql += " ORDER BY pinned DESC, last_message_ts DESC NULLS LAST LIMIT ?"
         args.append(limit)
         rows = await (await self.db.execute(sql, args)).fetchall()
         return [_chat(r) for r in rows]
@@ -359,6 +364,7 @@ def _chat(r: aiosqlite.Row) -> Chat:
         chat_jid=r["chat_jid"], name=r["name"], is_group=bool(r["is_group"]),
         last_message_ts=r["last_message_ts"], last_message_text=r["last_message_text"],
         unread_count=int(r["unread_count"]), archived=bool(r["archived"]),
+        pinned=bool(r["pinned"] if "pinned" in r.keys() else 0),
     )
 
 

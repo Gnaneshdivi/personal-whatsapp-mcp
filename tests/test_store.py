@@ -260,3 +260,24 @@ async def test_media_metadata_and_ref_survive_every_backend(store):
     got = await store.get_message("med1")
     assert got.media_ref == "/tmp/med1.jpg"
     assert got.public()["media_downloaded"] is True
+
+
+async def test_pinned_chats_sort_first(store):
+    """As WhatsApp does — pinned above everything, then recency."""
+    base = now_ms()
+    await store.touch_chat("old@s.whatsapp.net", base, False, "old")
+    await store.touch_chat("new@s.whatsapp.net", base + 60_000, False, "new")
+    await store.touch_chat("pin@s.whatsapp.net", base - 60_000, False, "pinned but old")
+    await store.upsert_chat_meta("pin@s.whatsapp.net", pinned=True)
+
+    order = [c.chat_jid for c in await store.list_chats()]
+    assert order[0] == "pin@s.whatsapp.net"
+    assert order[1] == "new@s.whatsapp.net"
+
+
+async def test_pinned_and_archived_round_trip(store):
+    await store.touch_chat("c@s.whatsapp.net", now_ms(), False, "hi")
+    await store.upsert_chat_meta("c@s.whatsapp.net", pinned=True)
+    c = await store.get_chat("c@s.whatsapp.net")
+    assert c.pinned is True and c.archived is False
+    assert c.public()["pinned"] is True

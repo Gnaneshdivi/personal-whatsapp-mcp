@@ -108,7 +108,8 @@ class MongoStore(Store):
 
     async def upsert_chat_meta(self, chat_jid: str, *, name: str | None = None,
                                is_group: bool | None = None,
-                               archived: bool | None = None) -> None:
+                               archived: bool | None = None,
+                               pinned: bool | None = None) -> None:
         sets: dict[str, Any] = {}
         if name is not None:
             sets["name"] = name
@@ -116,6 +117,8 @@ class MongoStore(Store):
             sets["is_group"] = bool(is_group)
         if archived is not None:
             sets["archived"] = bool(archived)
+        if pinned is not None:
+            sets["pinned"] = bool(pinned)
         if not sets:
             return
         await self.db.chats.update_one(
@@ -138,7 +141,8 @@ class MongoStore(Store):
         if query:
             rx = {"$regex": query, "$options": "i"}
             q["$or"] = [{"name": rx}, {"chat_jid": rx}]
-        cur = self.db.chats.find(q).sort("last_message_ts", -1).limit(limit)
+        cur = (self.db.chats.find(q)
+               .sort([("pinned", -1), ("last_message_ts", -1)]).limit(limit))
         return [_chat(d) async for d in cur]
 
     async def get_chat(self, chat_jid: str) -> Chat | None:
@@ -243,4 +247,5 @@ def _chat(d: dict) -> Chat:
         last_message_ts=d.get("last_message_ts"),
         last_message_text=d.get("last_message_text"),
         unread_count=int(d.get("unread_count", 0)), archived=bool(d.get("archived")),
+        pinned=bool(d.get("pinned")),
     )

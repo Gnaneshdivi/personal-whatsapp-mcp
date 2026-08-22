@@ -164,6 +164,7 @@ class Runtime:
                 "session_persisted_as_file": self.storage.session_is_file,
             },
             "contacts_loaded": self.contacts.loaded,
+            "contacts_known": len(self.contacts),
             "blocked": getattr(self.wa, "load_error", None) if self.wa else None,
             "auto_reply": self._auto_reply_status(),
         }

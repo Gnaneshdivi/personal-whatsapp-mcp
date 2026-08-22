@@ -21,6 +21,7 @@ because `push_name` arrives on every incoming message.
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 from . import jid as J
@@ -48,6 +49,7 @@ class ContactBook:
         self._names: dict[str, str] = {}
         self.loaded = False
         self.error: str | None = None
+        self.loaded_at = 0.0
 
     async def load(self) -> int:
         """Populate the cache. Never raises — a missing address book is survivable."""
@@ -68,10 +70,31 @@ class ContactBook:
             # Contacts are stored per-device; normalise so a lookup by chat jid
             # hits regardless of which device the row came from.
             names[J.normalise(their_jid or "")] = name.strip()
-        self._names = names
-        self.loaded = True
+        # Never replace a populated book with an empty one. whatsmeow writes
+        # contacts asynchronously during history sync, so a reload landing at
+        # the wrong moment can read zero rows, and losing the names we already
+        # had would be worse than keeping slightly stale ones.
+        if names or not self._names:
+            self._names = names
+        self.loaded = bool(self._names)
+        self.loaded_at = time.monotonic()
         self.error = None
         return len(names)
+
+    async def refresh_if_stale(self, max_age: float = 30.0) -> int:
+        """Reload when the book is empty or old.
+
+        The first load happens on ConnectedEv, which is BEFORE history sync
+        populates whatsmeow's contact store — measured at 0 contacts on connect
+        and 8,478 a minute later. Loading once means every chat renders as a
+        phone number forever.
+        """
+        if self._names and (time.monotonic() - self.loaded_at) < max_age:
+            return len(self._names)
+        return await self.load()
+
+    def __len__(self) -> int:
+        return len(self._names)
 
     def get(self, chat_jid: str) -> str | None:
         return self._names.get(J.normalise(chat_jid))

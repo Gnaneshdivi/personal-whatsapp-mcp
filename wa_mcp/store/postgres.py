@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS wa_chats (
     last_message_ts   BIGINT,
     last_message_text TEXT,
     unread_count      INTEGER NOT NULL DEFAULT 0,
-    archived          BOOLEAN NOT NULL DEFAULT FALSE
+    archived          BOOLEAN NOT NULL DEFAULT FALSE,
+    pinned            BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE INDEX IF NOT EXISTS ix_wa_chats_last ON wa_chats (last_message_ts DESC);
 
@@ -137,7 +138,8 @@ class PostgresStore(Store):
 
     async def upsert_chat_meta(self, chat_jid: str, *, name: str | None = None,
                                is_group: bool | None = None,
-                               archived: bool | None = None) -> None:
+                               archived: bool | None = None,
+                               pinned: bool | None = None) -> None:
         sets = []
         if name is not None:
             sets.append("name = EXCLUDED.name")
@@ -145,14 +147,16 @@ class PostgresStore(Store):
             sets.append("is_group = EXCLUDED.is_group")
         if archived is not None:
             sets.append("archived = EXCLUDED.archived")
+        if pinned is not None:
+            sets.append("pinned = EXCLUDED.pinned")
         if not sets:
             return
         async with self.pool.acquire() as c:
             await c.execute(
-                "INSERT INTO wa_chats (chat_jid, name, is_group, archived) "
-                "VALUES ($1,$2,$3,$4) ON CONFLICT (chat_jid) DO UPDATE SET "
+                "INSERT INTO wa_chats (chat_jid, name, is_group, archived, pinned) "
+                "VALUES ($1,$2,$3,$4,$5) ON CONFLICT (chat_jid) DO UPDATE SET "
                 + ", ".join(sets),
-                chat_jid, name, bool(is_group), bool(archived))
+                chat_jid, name, bool(is_group), bool(archived), bool(pinned))
 
     async def set_unread(self, chat_jid: str, count: int) -> None:
         async with self.pool.acquire() as c:
@@ -171,7 +175,7 @@ class PostgresStore(Store):
             args.append(f"%{query}%")
             sql += f" AND (name ILIKE ${len(args)} OR chat_jid ILIKE ${len(args)})"
         args.append(limit)
-        sql += f" ORDER BY last_message_ts DESC NULLS LAST LIMIT ${len(args)}"
+        sql += f" ORDER BY pinned DESC, last_message_ts DESC NULLS LAST LIMIT ${len(args)}"
         async with self.pool.acquire() as c:
             return [_chat(r) for r in await c.fetch(sql, *args)]
 
@@ -289,4 +293,5 @@ def _chat(r) -> Chat:
         chat_jid=r["chat_jid"], name=r["name"], is_group=bool(r["is_group"]),
         last_message_ts=r["last_message_ts"], last_message_text=r["last_message_text"],
         unread_count=int(r["unread_count"]), archived=bool(r["archived"]),
+        pinned=bool(r["pinned"]),
     )

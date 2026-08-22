@@ -90,6 +90,7 @@ class Chat:
     last_message_text: str | None = None
     unread_count: int = 0
     archived: bool = False
+    pinned: bool = False
 
     def public(self) -> dict[str, Any]:
         ts = from_ms(self.last_message_ts)
@@ -103,6 +104,7 @@ class Chat:
             "last_message": self.last_message_text,
             "unread": self.unread_count,
             "archived": self.archived,
+            "pinned": self.pinned,
         }
 
     @property
@@ -131,7 +133,8 @@ class Store(Protocol):
                          preview: str | None) -> None: ...
     async def upsert_chat_meta(self, chat_jid: str, *, name: str | None = None,
                                is_group: bool | None = None,
-                               archived: bool | None = None) -> None: ...
+                               archived: bool | None = None,
+                               pinned: bool | None = None) -> None: ...
     async def set_unread(self, chat_jid: str, count: int) -> None:
         """Set an absolute count, for read state arriving from the phone."""
 
