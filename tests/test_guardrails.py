@@ -489,3 +489,68 @@ async def test_a_saved_config_from_before_the_mute_list_still_loads(rt):
                    "mute_contacts": ["911@s.whatsapp.net"]}})
     d = await eng.consider(inbound("urgent!!"))
     assert d.notified is not None, "the stale key should be ignored, not obeyed"
+
+
+# ------------------------------------------------------- where alerts go
+
+async def test_alerts_go_to_your_own_chat_when_route_is_me(rt):
+    """The sensible setting on a personal number: your Message-yourself chat."""
+    rt.wa.self_jid = "919100828649@s.whatsapp.net"
+    eng = TriggerEngine(rt)
+    eng.settings = TriggerSettings.from_dict({
+        "notify": {"route": "me", "on_keywords": ["urgent"]}})
+    d = await eng.consider(inbound("urgent!!"))
+    assert d.notified == "919100828649@s.whatsapp.net"
+    assert any(to.startswith("919100828649") and "Needs you" in t
+               for to, t in rt.wa.sent)
+
+
+async def test_route_chat_sends_the_alert_to_the_person_it_is_about(rt):
+    """Allowed, but only on purpose — they read it.
+
+    Kept as a choice because someone watching their own personal number may
+    genuinely want the note in the thread. It is no longer what an empty field
+    silently does.
+    """
+    eng = TriggerEngine(rt)
+    eng.settings = TriggerSettings.from_dict({
+        "notify": {"route": "chat", "on_keywords": ["urgent"]}})
+    d = await eng.consider(inbound("urgent!!"))
+    assert d.notified == "911@s.whatsapp.net"
+
+
+async def test_route_number_uses_the_configured_phone(rt):
+    eng = TriggerEngine(rt)
+    eng.settings = TriggerSettings.from_dict({
+        "notify": {"route": "number", "jid": "919999999999",
+                   "on_keywords": ["urgent"]}})
+    d = await eng.consider(inbound("urgent!!"))
+    assert d.notified == "919999999999@s.whatsapp.net"
+
+
+async def test_route_off_sends_nothing(rt):
+    eng = TriggerEngine(rt)
+    eng.settings = TriggerSettings.from_dict({
+        "notify": {"route": "off", "jid": "919999999999",
+                   "on_keywords": ["urgent"]}})
+    d = await eng.consider(inbound("urgent!!"))
+    assert d.notified is None and rt.wa.sent == []
+
+
+async def test_route_number_with_no_number_sends_nothing(rt):
+    """Half-configured must fail closed, not fall back to the customer."""
+    eng = TriggerEngine(rt)
+    eng.settings = TriggerSettings.from_dict({
+        "notify": {"route": "number", "jid": "", "on_keywords": ["urgent"]}})
+    d = await eng.consider(inbound("urgent!!"))
+    assert d.notified is None and rt.wa.sent == []
+
+
+async def test_a_config_saved_before_routes_existed_keeps_alerting(rt):
+    """Anyone who set a number did so to be alerted; that must survive."""
+    eng = TriggerEngine(rt)
+    eng.settings = TriggerSettings.from_dict({
+        "notify": {"jid": "919999999999", "on_keywords": ["urgent"]}})
+    assert eng.settings.notify.route == "number"
+    d = await eng.consider(inbound("urgent!!"))
+    assert d.notified == "919999999999@s.whatsapp.net"

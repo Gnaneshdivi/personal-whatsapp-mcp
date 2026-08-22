@@ -157,7 +157,13 @@ class Notify:
     sensible default for a personal number.
     """
 
-    jid: str = ""                     # empty -> the chat the message came from
+    # Where alerts go. A single free-text box could not express this: blank
+    # once meant "the chat it came from", which delivered internal wording to
+    # the customer, and blank then meant "off", which silently stopped alerts
+    # someone had deliberately configured. Neither is guessable from an empty
+    # field, so the destination is now stated.
+    route: str = "off"                # off | me | chat | number
+    jid: str = ""                     # only read when route == "number"
     on_handoff: bool = True           # the model asked for a human
     on_blocked: bool = False          # a guardrail refused
     on_error: bool = False            # the backend failed
@@ -256,7 +262,7 @@ class TriggerSettings:
             webhook=_build(WebhookBackend, raw.get("webhook")),
             reply=_build(ReplyScope, raw.get("reply")),
             guardrails=_build(Guardrails, raw.get("guardrails")),
-            notify=_build(Notify, raw.get("notify")),
+            notify=_notify_from(raw.get("notify")),
             # send_images was the name before this covered video,
             # audio and documents; still read so an existing saved
             # config keeps working across the upgrade.
@@ -291,6 +297,16 @@ class TriggerSettings:
         if self.reply.personal == "none" and self.reply.groups == "none":
             return False, "no chats are in scope — enable personal or group replies"
         return True, ""
+
+
+def _notify_from(raw) -> "Notify":
+    """Notify, with `route` inferred for configs saved before it existed."""
+    n = _build(Notify, raw)
+    if isinstance(raw, dict) and not raw.get("route"):
+        n.route = "number" if n.jid else "off"
+    if n.route not in ("off", "me", "chat", "number"):
+        n.route = "off"
+    return n
 
 
 def _build(cls, raw):

@@ -291,18 +291,32 @@ class TriggerEngine:
         return self._record(Decision(False, reason, notified=notified))
 
     async def _notify(self, msg: Inbound, reason: str) -> str | None:
-        """Tell a human, if a number has been given to tell.
+        """Tell a human, wherever `route` says to.
 
-        No number means no alert. This used to fall back to the chat the
-        message came from, which sent "Needs you: … Their message: … Reason: …"
-        to the person that alert is *about* — internal wording delivered to a
-        customer, and unreadable to the owner if they are not in that chat
-        anyway. Clearing the field also looked like it disabled alerts and
-        instead quietly redirected them at whoever had just written in.
+        The destination used to be inferred from whether a number was filled
+        in, which could not express the three real cases. Blank first meant
+        "the chat it came from" — which delivers "Needs you: … Reason: …" to
+        the person the alert is *about* — and then meant "off", which silently
+        stopped alerts someone had set up on purpose. Now it is stated:
+
+            off     nothing is sent
+            me      your own self-chat, for a personal number
+            chat    back into the conversation, which the other side will read
+            number  a separate phone, for a business line
         """
         n = self.settings.notify
-        target = J.to_jid(n.jid) if n.jid else ""
+        if n.route == "me":
+            # The self-chat -- "Message yourself" in WhatsApp. Right for a
+            # personal number, where there is no second phone to alert.
+            target = J.normalise(getattr(self.rt.wa, "self_jid", "") or "")
+        elif n.route == "chat":
+            target = J.normalise(msg.chat_jid)
+        elif n.route == "number":
+            target = J.to_jid(n.jid)
+        else:
+            target = ""
         if not target:
+            log.debug("no alert: route=%r resolved to nothing", n.route)
             return None
         try:
             ctx = await self._context(msg)

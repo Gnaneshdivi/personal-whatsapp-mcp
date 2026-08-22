@@ -436,11 +436,20 @@ def build(rt, q: str, status: dict) -> str:
     # --- notify ----------------------------------------------------------
     n = t.notify
     notify = section("Tell me when", (
-        row("Send alerts to", text_in("notify.jid", n.jid, "919812345678"),
-            "The number that should hear about these — the owner's personal "
-            "phone, say, when the line customers write to is not the line the "
-            "owner reads.\n\nLeave it blank and no alerts are sent at all.",
-            hint="Blank switches alerts off.")
+        row("Send alerts to", select("notify.route", n.route,
+                                     [("off", "Nowhere — alerts off"),
+                                      ("me", "My own number"),
+                                      ("chat", "Back into the same chat"),
+                                      ("number", "Another number")]),
+            "My own number puts alerts in your Message-yourself chat, which is "
+            "usually what you want on a personal number.\n\nBack into the same "
+            "chat means the person who messaged you SEES the alert — it reads "
+            "\"Needs you: … Their message: … Reason: …\". Only pick it if that "
+            "is genuinely what you want.\n\nAnother number is for a business "
+            "line, where the number customers write to is not the one you read.")
+        + row("Which number", text_in("notify.jid", n.jid, "919812345678"),
+              "With the country code and no +, e.g. 919812345678.",
+              when="notify.route=number")
         + row("Alert me when a message contains",
               csv_in("notify.on_keywords", n.on_keywords, "urgent, complaint, cancel"),
               "Comma separated, matched case-insensitively.", wide=True)
