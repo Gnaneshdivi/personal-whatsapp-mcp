@@ -168,9 +168,15 @@ class PostgresStore(Store):
     # ----------------------------------------------------------------- reads
 
     async def list_chats(self, *, limit: int = 30, archived: bool = False,
-                         query: str | None = None) -> list[Chat]:
+                         query: str | None = None, kind: str = "all") -> list[Chat]:
         sql = "SELECT * FROM wa_chats WHERE archived = $1"
         args: list[Any] = [archived]
+        if kind == "groups":
+            sql += " AND is_group"
+        elif kind == "direct":
+            sql += " AND NOT is_group"
+        elif kind == "unread":
+            sql += " AND unread_count > 0"
         if query:
             args.append(f"%{query}%")
             sql += f" AND (name ILIKE ${len(args)} OR chat_jid ILIKE ${len(args)})"

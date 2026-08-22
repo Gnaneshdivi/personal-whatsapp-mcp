@@ -177,6 +177,10 @@ async function openChat(jid) {
   $("#blank").style.display = "none";
   $("#msgs").innerHTML = "";
   paint(d.messages, false);
+  $("#msgs").insertAdjacentHTML("afterbegin", hasMore
+    ? '<button class="more" id="more">Load older messages</button>'
+    : '<div class="sys" id="more">Start of the history WhatsApp sent for this chat</div>');
+  const b0 = $("#more"); if (b0 && b0.tagName === "BUTTON") b0.onclick = loadOlder;
   $("#msgs").scrollTop = $("#msgs").scrollHeight;   // newest in view
   fetch(KA(`/api/read/${encodeURIComponent(jid)}`), {method:"POST"}).then(loadChats);
 }
@@ -209,21 +213,27 @@ function paint(list, prepend) {
   if (prepend) {
     // Preserve the reading position: measure before, restore after.
     const before = box.scrollHeight, top = box.scrollTop;
-    box.insertAdjacentHTML("afterbegin",
-      (hasMore ? '<button class="more" id="more">Load older messages</button>' : "") + html);
+    // Say when history ends. Scrolling that just stops reads as a broken app;
+    // WhatsApp only sends part of each conversation at pair time and there is
+    // no way to ask for more, so the boundary has to be visible.
+    const head = hasMore
+      ? '<button class="more" id="more">Load older messages</button>'
+      : '<div class="sys" id="more">Start of the history WhatsApp sent for this chat</div>';
+    box.insertAdjacentHTML("afterbegin", head + html);
     box.scrollTop = top + (box.scrollHeight - before);
   } else {
     box.insertAdjacentHTML("beforeend", html);
   }
   if (list.length) oldest = oldest || list[0].message_id;
   if (prepend && list.length) oldest = list[0].message_id;
-  const btn = $("#more"); if (btn) btn.onclick = loadOlder;
+  const btn = $("#more");
+  if (btn && btn.tagName === "BUTTON") btn.onclick = loadOlder;
 }
 
 async function loadOlder() {
   if (loading || !hasMore || !oldest) return;
   loading = true;
-  const btn = $("#more"); if (btn) { btn.textContent = "Loading…"; btn.remove(); }
+  const btn = $("#more"); if (btn) btn.remove();
   const d = await (await fetch(KA(
     `/api/messages/${encodeURIComponent(current)}?limit=40&before=${encodeURIComponent(oldest)}`))).json();
   hasMore = d.has_more;

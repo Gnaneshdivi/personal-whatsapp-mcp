@@ -136,8 +136,14 @@ class MongoStore(Store):
     # ----------------------------------------------------------------- reads
 
     async def list_chats(self, *, limit: int = 30, archived: bool = False,
-                         query: str | None = None) -> list[Chat]:
+                         query: str | None = None, kind: str = "all") -> list[Chat]:
         q: dict[str, Any] = {"archived": bool(archived)}
+        if kind == "groups":
+            q["is_group"] = True
+        elif kind == "direct":
+            q["is_group"] = False
+        elif kind == "unread":
+            q["unread_count"] = {"$gt": 0}
         if query:
             rx = {"$regex": query, "$options": "i"}
             q["$or"] = [{"name": rx}, {"chat_jid": rx}]

@@ -281,3 +281,29 @@ async def test_pinned_and_archived_round_trip(store):
     c = await store.get_chat("c@s.whatsapp.net")
     assert c.pinned is True and c.archived is False
     assert c.public()["pinned"] is True
+
+
+async def test_filters_run_in_the_query_not_on_the_page(store):
+    """With 30 direct chats newer than every group, a groups filter applied
+    AFTER a limit of 10 returns nothing — which reads as missing data rather
+    than as a bug. Live: 295 groups existed and the Groups tab showed 4."""
+    base = now_ms()
+    for i in range(30):
+        await store.touch_chat(f"d{i}@s.whatsapp.net", base + i * 1000, False, "hi")
+    for i in range(5):
+        await store.touch_chat(f"g{i}@g.us", base - (i + 1) * 100_000, False, "hi")
+        await store.upsert_chat_meta(f"g{i}@g.us", is_group=True)
+
+    groups = await store.list_chats(limit=10, kind="groups")
+    assert len(groups) == 5
+    assert all(c.is_group for c in groups)
+
+    direct = await store.list_chats(limit=10, kind="direct")
+    assert len(direct) == 10 and not any(c.is_group for c in direct)
+
+
+async def test_unread_filter(store):
+    await store.touch_chat("read@s.whatsapp.net", now_ms(), True, "mine")
+    await store.touch_chat("unread@s.whatsapp.net", now_ms(), False, "theirs")
+    got = await store.list_chats(kind="unread")
+    assert [c.chat_jid for c in got] == ["unread@s.whatsapp.net"]

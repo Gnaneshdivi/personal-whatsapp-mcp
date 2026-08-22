@@ -216,9 +216,15 @@ class SQLiteStore(Store):
     # ----------------------------------------------------------------- reads
 
     async def list_chats(self, *, limit: int = 30, archived: bool = False,
-                         query: str | None = None) -> list[Chat]:
+                         query: str | None = None, kind: str = "all") -> list[Chat]:
         sql = "SELECT * FROM chats WHERE archived = ?"
         args: list[Any] = [int(archived)]
+        if kind == "groups":
+            sql += " AND is_group = 1"
+        elif kind == "direct":
+            sql += " AND is_group = 0"
+        elif kind == "unread":
+            sql += " AND unread_count > 0"
         if query:
             sql += " AND (name LIKE ? OR chat_jid LIKE ?)"
             args += [f"%{query}%", f"%{query}%"]

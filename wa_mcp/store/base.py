@@ -140,7 +140,15 @@ class Store(Protocol):
 
     # ---- reads ----
     async def list_chats(self, *, limit: int = 30, archived: bool = False,
-                         query: str | None = None) -> list[Chat]: ...
+                         query: str | None = None,
+                         kind: str = "all") -> list[Chat]:
+        """`kind` is one of all | groups | direct | unread.
+
+        Filtering belongs in the query, not after it. Filtering a page of
+        results is a bug that hides itself: with 295 groups but only 4 of them
+        recent enough to be in the top 80 rows, a "Groups" tab showed 4 and
+        looked like the data was missing.
+        """
     async def get_chat(self, chat_jid: str) -> Chat | None: ...
     async def get_messages(self, chat_jid: str, *, limit: int = 30,
                            before_id: str | None = None,

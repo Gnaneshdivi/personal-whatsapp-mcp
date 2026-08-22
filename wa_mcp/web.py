@@ -213,13 +213,9 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         q = request.query_params
         chats = await rt.store.list_chats(
             limit=int(q.get("limit", 60)), archived=q.get("archived") == "1",
-            query=q.get("q") or None)
+            query=q.get("q") or None, kind=q.get("filter") or "all")
         out = []
         for c in chats:
-            if q.get("filter") == "unread" and not c.unread_count:
-                continue
-            if q.get("filter") == "groups" and not c.is_group:
-                continue
             d = c.public()
             d["name"] = rt.contacts.display_name(c.chat_jid, chat_name=c.name)
             out.append(d)
