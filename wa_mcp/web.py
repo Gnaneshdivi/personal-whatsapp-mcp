@@ -55,6 +55,25 @@ a{color:#53bdeb;text-decoration:none}
 .qr{background:#fff;padding:14px;border-radius:12px;display:inline-block;line-height:0}
 .qr svg{display:block;width:min(70vw,300px);height:auto}
 code{background:#182229;padding:2px 5px;border-radius:4px;font-size:12px;word-break:break-all}
+.set{max-width:720px;margin:0 auto;padding:28px 20px 60px}
+.set h1{font-size:20px;margin:0 0 6px}
+.set h2{font-size:14px;text-transform:uppercase;letter-spacing:.08em;color:#8696a0;
+        margin:28px 0 10px;padding-bottom:6px;border-bottom:1px solid #222d34}
+.set label{display:block;margin:12px 0 4px;font-size:13px;color:#8696a0}
+.set input,.set select,.set textarea{width:100%;background:#111b21;color:#e9edef;
+   border:1px solid #2a3942;border-radius:7px;padding:9px 11px;font:inherit;font-size:14px}
+.set textarea{font-family:ui-monospace,monospace;font-size:13px;min-height:84px;resize:vertical}
+.set .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.set button{background:#00a884;color:#0b141a;border:0;border-radius:7px;padding:10px 18px;
+   font:inherit;font-weight:600;cursor:pointer;margin-top:18px}
+.set button.ghost{background:#2a3942;color:#e9edef;margin-left:8px}
+.warn{background:#3b2a15;border:1px solid #6b4a1f;border-radius:8px;padding:12px 14px;
+      font-size:13px;color:#f0c987;margin:14px 0}
+.ok{color:#00a884}.bad{color:#f15c6d}
+.pill{display:inline-block;padding:2px 9px;border-radius:11px;font-size:12px;background:#2a3942}
+.pill.on{background:#00a884;color:#0b141a}
+#out{white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:12px;
+     background:#111b21;border:1px solid #2a3942;border-radius:7px;padding:11px;margin-top:12px}
 """
 
 
@@ -100,6 +119,7 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
   <div class="hd"><span class="dot{'' if st['ready'] else ' warn'}"></span>
     <b>{_esc(st['push_name'] or 'WhatsApp')}</b>
     <span style="margin-left:auto;color:#8696a0;font-size:13px">{_esc(st['number'] or '')}</span>
+    <a href="/settings{_q(request)}" title="Settings" style="font-size:17px">&#9881;</a>
   </div>
   <div class="sync" id="sync"></div>
   {listing}
@@ -199,6 +219,176 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
     async def status_api(request):
         return JSONResponse(rt.status())
 
+    async def settings_page(request):
+        st = rt.status()
+        t = rt.trigger.settings
+        ar = st["auto_reply"]
+        ready = st["ready"]
+        gate = "" if ready else (
+            '<div class="warn">Still syncing. Settings save, but replies stay '
+            'held until history finishes — otherwise the first thing this does '
+            'is answer weeks of old messages at once.</div>')
+        state = ('<span class="pill on">active</span>' if ar["active"]
+                 else f'<span class="pill">idle — {_esc(ar["reason"] or "off")}</span>')
+        chats = await rt.store.list_chats(limit=200)
+        opts = "".join(
+            f'<option value="{_esc(c.chat_jid)}">'
+            f'{_esc(rt.contacts.display_name(c.chat_jid, chat_name=c.name))}</option>'
+            for c in chats if not c.is_group)
+        gopts = "".join(
+            f'<option value="{_esc(c.chat_jid)}">'
+            f'{_esc(rt.contacts.display_name(c.chat_jid, chat_name=c.name))}</option>'
+            for c in chats if c.is_group)
+
+        def sel(cur, *vals):
+            return "".join(f'<option value="{v}"{" selected" if cur == v else ""}>{v}</option>'
+                           for v in vals)
+
+        return HTMLResponse(_page("Settings", f"""
+<div class="set">
+ <a href="/{_q(request)}" style="font-size:13px">&larr; chats</a>
+ <h1>Auto-reply {state}</h1>
+ <p style="color:#8696a0;font-size:13px">Replies are off until you turn them on,
+    per scope. This sends from your real number — bulk or unsolicited messages
+    can get it banned.</p>
+ {gate}
+ <form id="f">
+  <h2>Backend</h2>
+  <label>Enabled</label>
+  <select name="enabled">{sel("yes" if t.enabled else "no", "no", "yes")}</select>
+  <label>Reply using</label>
+  <select name="backend">{sel(t.backend, "model", "webhook")}</select>
+
+  <div id="model">
+   <h2>Model — any OpenAI-compatible endpoint</h2>
+   <label>Base URL</label>
+   <input name="model.base_url" value="{_esc(t.model.base_url)}"
+          placeholder="https://openrouter.ai/api/v1" list="presets">
+   <datalist id="presets">
+     <option value="https://openrouter.ai/api/v1">
+     <option value="https://api.openai.com/v1">
+     <option value="https://api.groq.com/openai/v1">
+     <option value="https://api.together.xyz/v1">
+     <option value="http://localhost:11434/v1">
+     <option value="http://localhost:1234/v1">
+   </datalist>
+   <div class="two">
+    <div><label>API key</label>
+      <input name="model.api_key" type="password"
+             value="{'***' if t.model.api_key else ''}" placeholder="sk-..."></div>
+    <div><label>Model</label>
+      <input name="model.model" value="{_esc(t.model.model)}"
+             placeholder="anthropic/claude-sonnet-4.5"></div>
+   </div>
+   <label>System prompt</label>
+   <textarea name="model.system_prompt">{_esc(t.model.system_prompt)}</textarea>
+   <p style="color:#8696a0;font-size:12px">Tokens: {{{{me_name}}}} {{{{chat_name}}}}
+      {{{{sender_name}}}} {{{{message}}}}</p>
+  </div>
+
+  <div id="webhook">
+   <h2>Webhook</h2>
+   <label>URL</label>
+   <input name="webhook.url" value="{_esc(t.webhook.url)}" placeholder="https://...">
+   <label>Body template</label>
+   <textarea name="webhook.body">{_esc(t.webhook.body)}</textarea>
+   <label>Reply path in the response</label>
+   <input name="webhook.reply_path" value="{_esc(t.webhook.reply_path)}">
+  </div>
+
+  <h2>Who gets replies</h2>
+  <label>Direct messages</label>
+  <select name="reply.personal">{sel(t.reply.personal, "none", "all", "allowlist")}</select>
+  <label>Only these people (ctrl-click for several)</label>
+  <select name="reply.personal_allowlist" multiple size="4">{opts}</select>
+  <label>Groups</label>
+  <select name="reply.groups">{sel(t.reply.groups, "none", "all", "allowlist")}</select>
+  <label>Only these groups</label>
+  <select name="reply.groups_allowlist" multiple size="4">{gopts}</select>
+  <label>In groups, only reply when mentioned</label>
+  <select name="reply.require_mention_in_groups">
+    {sel("yes" if t.reply.require_mention_in_groups else "no", "yes", "no")}</select>
+  <div class="two">
+   <div><label>Cooldown per chat (seconds)</label>
+     <input name="reply.cooldown_seconds" type="number" value="{t.reply.cooldown_seconds}"></div>
+   <div><label>Max replies per hour</label>
+     <input name="reply.max_replies_per_hour" type="number"
+            value="{t.reply.max_replies_per_hour}"></div>
+  </div>
+
+  <button type="submit">Save</button>
+  <button type="button" class="ghost" onclick="test()">Test backend</button>
+ </form>
+ <div id="out" style="display:none"></div>
+</div>
+<script>
+ const q = "{_q(request)}";
+ function toggle() {{
+   const b = document.querySelector('[name=backend]').value;
+   document.getElementById('model').style.display   = b === 'model'   ? '' : 'none';
+   document.getElementById('webhook').style.display = b === 'webhook' ? '' : 'none';
+ }}
+ document.querySelector('[name=backend]').onchange = toggle; toggle();
+
+ function collect() {{
+   const o = {{model:{{}}, webhook:{{}}, reply:{{}}}};
+   for (const el of document.querySelectorAll('#f [name]')) {{
+     let v = el.multiple ? [...el.selectedOptions].map(x=>x.value) : el.value;
+     if (v === 'yes') v = true; if (v === 'no') v = false;
+     if (el.type === 'number') v = parseInt(v||'0', 10);
+     const p = el.name.split('.');
+     if (p.length === 1) o[p[0]] = v; else o[p[0]][p[1]] = v;
+   }}
+   return o;
+ }}
+ const out = document.getElementById('out');
+ function show(t, good) {{ out.style.display='block'; out.textContent=t;
+   out.style.borderColor = good ? '#00a884' : '#f15c6d'; }}
+
+ document.getElementById('f').onsubmit = async e => {{
+   e.preventDefault();
+   const r = await fetch('/api/settings'+q, {{method:'POST',
+     headers:{{'Content-Type':'application/json'}}, body: JSON.stringify(collect())}});
+   const d = await r.json();
+   show(d.ok ? ('Saved. ' + (d.would_fire ? 'Replies are live.' :
+        'Not firing: ' + (d.blocked_by||''))) : ('Error: '+d.error), d.ok);
+ }};
+ async function test() {{
+   show('Testing…', true);
+   const r = await fetch('/api/test-reply'+q, {{method:'POST'}});
+   const d = await r.json();
+   show(d.ok ? ('Backend replied:\n\n' + d.reply) : ('Failed:\n\n' + d.error), d.ok);
+ }}
+</script>"""))
+
+    async def settings_api(request):
+        raw = await request.json()
+        from .trigger.settings import TriggerSettings
+        cur = rt.trigger.settings
+        if isinstance(raw.get("model"), dict) and raw["model"].get("api_key") in ("***", ""):
+            raw["model"]["api_key"] = cur.model.api_key
+        merged = TriggerSettings.from_dict(raw)
+        await rt.trigger.save(merged)
+        ok, why = merged.ready()
+        return JSONResponse({"ok": True, "would_fire": ok and rt.status()["ready"],
+                             "blocked_by": why})
+
+    async def test_reply_api(request):
+        from .trigger.backends import Context, reply_via_model, reply_via_webhook
+        t = rt.trigger.settings
+        ctx = Context(message="hello, are you there?", chat_name="Test",
+                      chat_jid="test@s.whatsapp.net", sender_name="Test",
+                      sender_jid="test@s.whatsapp.net",
+                      me_name=getattr(rt.wa, "push_name", "") or "me",
+                      message_id="test", timestamp="0",
+                      history=[(False, "Test", "hello, are you there?")])
+        try:
+            reply = await (reply_via_model(t.model, ctx) if t.backend == "model"
+                           else reply_via_webhook(t.webhook, ctx))
+            return JSONResponse({"ok": True, "reply": reply})
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": str(exc)})
+
     async def qr_txt(request):
         qr = rt.wa.qr if rt.wa else None
         if not qr:
@@ -229,6 +419,9 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         Route("/c/{jid}", chat),
         Route("/connect", connect),
         Route("/api/status", status_api),
+        Route("/settings", settings_page),
+        Route("/api/settings", settings_api, methods=["POST"]),
+        Route("/api/test-reply", test_reply_api, methods=["POST"]),
         Route("/qr.txt", qr_txt),
         Route("/events", events),
     ]:

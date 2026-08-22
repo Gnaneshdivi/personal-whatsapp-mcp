@@ -419,3 +419,147 @@ def create_app(settings: Settings, storage: Storage):
     log.warning("WA_AUTH_TOKEN is not set — this server is UNAUTHENTICATED. "
                 "Fine on localhost, never behind a tunnel.")
     return app
+
+
+# ========================================================== auto-reply
+
+@mcp.tool
+async def wa_get_reply_settings() -> dict[str, Any]:
+    """Current auto-reply configuration, with secrets redacted.
+
+    Shows which backend is selected, who is in scope, and — when it is not
+    firing — the reason why.
+    """
+    try:
+        r = rt()
+        ok, why = r.trigger.settings.ready()
+        return {"ok": True, "settings": r.trigger.settings.redacted(),
+                "would_fire": ok and bool(r.wa and r.wa.sync.state.ready),
+                "blocked_by": why or ("" if r.wa and r.wa.sync.state.ready
+                                      else "still syncing")}
+    except Exception as exc:
+        return _fail(exc)
+
+
+@mcp.tool
+async def wa_set_reply_settings(settings_json: str) -> dict[str, Any]:
+    """Replace the auto-reply configuration with a JSON object.
+
+    Pass the same shape wa_get_reply_settings returns. Unknown keys are ignored
+    and missing ones keep their defaults, so a partial object is safe.
+
+    Everything defaults to off. Enabling replies on a real number can get it
+    banned — confirm with the user before switching this on.
+    """
+    try:
+        import json as _json
+
+        from .trigger.settings import TriggerSettings
+
+        raw = _json.loads(settings_json)
+        if not isinstance(raw, dict):
+            raise ToolError("settings_json must be a JSON object")
+        # Never let a redacted value overwrite a real secret.
+        current = rt().trigger.settings
+        if raw.get("model", {}).get("api_key") == "***":
+            raw["model"]["api_key"] = current.model.api_key
+        merged = TriggerSettings.from_dict(raw)
+        await rt().trigger.save(merged)
+        ok, why = merged.ready()
+        return {"ok": True, "saved": merged.redacted(),
+                "would_fire": ok, "blocked_by": why}
+    except ValueError as exc:
+        return {"ok": False, "error": f"invalid JSON: {exc}"}
+    except Exception as exc:
+        return _fail(exc)
+
+
+@mcp.tool
+async def wa_test_reply(text: str = "hello, are you there?",
+                        chat: str = "") -> dict[str, Any]:
+    """Run the configured backend against a made-up message WITHOUT sending.
+
+    The debugging tool to reach for first: it shows what the model or webhook
+    actually returns, including the raw error when it fails.
+    """
+    try:
+        r = rt()
+        from .trigger.backends import Context, reply_via_model, reply_via_webhook
+
+        jid = await _resolve_chat(chat) if chat else "test@s.whatsapp.net"
+        c = await r.store.get_chat(jid)
+        ctx = Context(
+            message=text,
+            chat_name=r.contacts.display_name(jid, chat_name=c.name if c else None),
+            chat_jid=jid, sender_name="Test", sender_jid=jid,
+            me_name=getattr(r.wa, "push_name", "") or "me",
+            message_id="test", timestamp="0",
+            history=[(False, "Test", text)],
+        )
+        s = r.trigger.settings
+        if s.backend == "model":
+            reply = await reply_via_model(s.model, ctx)
+        else:
+            reply = await reply_via_webhook(s.webhook, ctx)
+        return {"ok": True, "backend": s.backend, "reply": reply, "sent": False}
+    except Exception as exc:
+        return {"ok": False, "backend": rt().trigger.settings.backend,
+                "error": str(exc), "sent": False}
+
+
+@mcp.tool
+async def wa_reply_log(limit: int = 20) -> dict[str, Any]:
+    """Recent auto-reply decisions and why each one fired or did not.
+
+    The answer to "why didn't it reply?" — every skip records its reason.
+    """
+    try:
+        entries = list(rt().trigger.log)[:limit]
+        return {"ok": True, "count": len(entries), "decisions": entries}
+    except Exception as exc:
+        return _fail(exc)
+
+
+# ============================================================== groups
+
+@mcp.tool
+async def wa_list_groups() -> dict[str, Any]:
+    """Groups this number is in, with names."""
+    try:
+        chats = await rt().store.list_chats(limit=500)
+        groups = [_chat_out(c) for c in chats if c.is_group]
+        return {"ok": True, "count": len(groups), "groups": groups}
+    except Exception as exc:
+        return _fail(exc)
+
+
+@mcp.tool
+async def wa_group_info(chat: str) -> dict[str, Any]:
+    """Name, topic and participants of a group."""
+    try:
+        jid = await _resolve_chat(chat)
+        info = await rt().wa.group_info(jid)
+        return {"ok": True, **info}
+    except Exception as exc:
+        return _fail(exc)
+
+
+# =============================================================== media
+
+@mcp.tool
+async def wa_download_media(message_id: str) -> dict[str, Any]:
+    """Download the media attached to a message and return it base64-encoded.
+
+    Media is fetched on demand rather than eagerly — a large history would
+    otherwise fill the disk before anything was read.
+    """
+    try:
+        import base64 as _b64
+
+        data = await rt().wa.download_media(message_id)
+        if data is None:
+            return {"ok": False, "error": "no media on that message"}
+        return {"ok": True, "message_id": message_id, "bytes": len(data),
+                "media_base64": _b64.b64encode(data).decode()}
+    except Exception as exc:
+        return _fail(exc)

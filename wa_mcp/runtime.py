@@ -53,12 +53,22 @@ class Runtime:
         self.store: Store = build_store(self.storage)
         self.contacts = ContactBook(self.storage.session_dsn, self.storage.session_is_file)
         self.wa = None            # built lazily: importing neonize loads 21MB of Go
+        self.trigger = None       # built in start(), needs the store connected
         self._subscribers: list = []
 
     # ------------------------------------------------------------- lifecycle
 
     async def start(self) -> None:
         await self.store.connect()
+
+        from .trigger.engine import TriggerEngine
+
+        self.trigger = TriggerEngine(self)
+        settings = await self.trigger.load()
+        if settings.enabled:
+            ok, why = settings.ready()
+            log.info("auto-reply enabled" if ok else "auto-reply enabled but idle: %s", why)
+
         from .whatsapp.client import WhatsApp
 
         self.wa = WhatsApp(
@@ -93,6 +103,8 @@ class Runtime:
             self._subscribers.remove(q)
 
     async def _fanout(self, event_type: str, payload: dict) -> None:
+        if event_type == "message.received":
+            await self._maybe_reply(payload)
         for q in list(self._subscribers):
             try:
                 q.put_nowait({"type": event_type, **payload})
@@ -102,6 +114,31 @@ class Runtime:
                     q.put_nowait({"type": event_type, **payload})
                 except Exception:
                     pass
+
+    async def _maybe_reply(self, payload: dict) -> None:
+        """Hand an inbound message to the reply engine.
+
+        Guarded and awaited rather than fired into a task: the engine already
+        holds the cooldown and hourly cap, and running concurrently would let a
+        burst slip past both before either was recorded.
+        """
+        if self.trigger is None:
+            return
+        from .trigger.engine import Inbound
+        from .whatsapp import jid as J
+
+        try:
+            await self.trigger.consider(Inbound(
+                chat_jid=payload.get("chat_jid", ""),
+                message_id=payload.get("message_id", ""),
+                sender_jid=payload.get("sender_jid", ""),
+                text=payload.get("text") or "",
+                is_from_me=bool(payload.get("from_me")),
+                is_group=J.is_group(payload.get("chat_jid", "")),
+                mentioned_me=bool(payload.get("mentioned_me")),
+            ))
+        except Exception:
+            log.exception("reply engine failed")
 
     # ------------------------------------------------------------- status
 
@@ -119,4 +156,17 @@ class Runtime:
                 "session_persisted_as_file": self.storage.session_is_file,
             },
             "contacts_loaded": self.contacts.loaded,
+            "auto_reply": self._auto_reply_status(),
+        }
+
+    def _auto_reply_status(self) -> dict:
+        if self.trigger is None:
+            return {"enabled": False, "active": False, "reason": "starting"}
+        ok, why = self.trigger.settings.ready()
+        return {
+            "enabled": self.trigger.settings.enabled,
+            "backend": self.trigger.settings.backend,
+            "active": ok and bool(self.wa and self.wa.sync.state.ready),
+            "reason": why or ("" if self.wa and self.wa.sync.state.ready
+                              else "waiting for sync"),
         }

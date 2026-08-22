@@ -382,7 +382,30 @@ class WhatsApp:
             "message_id": message_id, "chat_jid": chat, "sender_jid": sender,
             "text": extract.extract_text(body), "type": msg_type,
             "from_me": bool(src.IsFromMe), "ts": ts,
+            "mentioned_me": self._mentions_me(body),
         })
+
+    def _mentions_me(self, body) -> bool:
+        """Whether this message @-mentions us.
+
+        Group replies are gated on this by default, so a false negative means a
+        silent bot and a false positive means an unwanted one. Mentions live in
+        contextInfo.mentionedJID on whichever sub-message carries the text, so
+        the unwrapped body is what has to be inspected.
+        """
+        if not self.self_jid:
+            return False
+        me = J.normalise(self.self_jid).split("@")[0]
+        try:
+            inner = extract.unwrap(body)
+        except Exception:
+            inner = body
+        for _field, value in getattr(inner, "ListFields", lambda: [])():
+            ctx = getattr(value, "contextInfo", None)
+            for mentioned in list(getattr(ctx, "mentionedJID", None) or []):
+                if J.normalise(str(mentioned)).split("@")[0] == me:
+                    return True
+        return False
 
     async def _on_receipt(self, ev) -> None:
         """Answer RETRY receipts by resending from our own store.
@@ -533,6 +556,19 @@ class WhatsApp:
         if entry is not None and not getattr(entry, "IsIn", True):
             jid = ""
         return {"phone": phone, "jid": jid or None, "on_whatsapp": bool(jid)}
+
+    async def group_info(self, chat_jid: str) -> dict:
+        """Name, topic and participants, asked of WhatsApp directly."""
+        self._guard()
+        info = await self._client.get_group_info(self._jid(chat_jid))
+        name = getattr(getattr(info, "GroupName", None), "Name", None) or getattr(info, "Name", "")
+        topic = getattr(getattr(info, "GroupTopic", None), "Topic", "") or ""
+        people = []
+        for p in list(getattr(info, "Participants", None) or []):
+            people.append({"jid": J.from_obj(getattr(p, "JID", None)),
+                           "admin": bool(getattr(p, "IsAdmin", False))})
+        return {"chat_jid": J.to_jid(chat_jid), "name": str(name), "topic": str(topic),
+                "participants": people, "participant_count": len(people)}
 
     async def download_media(self, message_id: str) -> bytes | None:
         """Fetch media on demand.
