@@ -343,18 +343,50 @@ class Auth:
     search immediately and the client falls back to the URL as given.
     """
 
-    SKIP = ("/.well-known/", "/register", "/authorize", "/token")
+    SKIP = ("/.well-known/", "/register", "/authorize", "/token", "/revoke")
 
-    def __init__(self, app, token: str):
-        self.app, self.token = app, token
+    def __init__(self, app, token: str, oauth: bool = False):
+        self.app, self.token, self.oauth = app, token, oauth
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http" or not self.token:
             return await self.app(scope, receive, send)
 
         path = scope.get("path", "")
+        query = scope.get("query_string", b"").decode()
+
         if any(path.startswith(p) for p in self.SKIP):
+            if self.oauth:
+                # These are the OAuth endpoints — fastmcp serves them and does
+                # its own checks. Gating them behind our token would make the
+                # flow impossible, since a client discovering us has no token.
+                return await self.app(scope, receive, send)
             return await _plain(send, 404, b'{"error":"no_oauth_provider"}')
+
+        # A browser arriving from /authorize carries no token — the flow id in
+        # the URL is the capability, and it is a 24-byte secret minted by us for
+        # exactly this request.
+        if self.oauth and (path in ("/connect", "/qr.txt")
+                           or path.startswith("/api/flow/")) and "flow" in (query + path):
+            return await self.app(scope, receive, send)
+
+        # With OAuth on, /mcp is authenticated by fastmcp against a real access
+        # token. Rather than run two parallel checks, the static token is
+        # REGISTERED as an access token at startup (see create_app) — so it is
+        # not a special case at all, just a token that never expires. `?k=` is
+        # rewritten into the header fastmcp expects, since connector dialogs
+        # cannot set headers.
+        if self.oauth and path.startswith("/mcp"):
+            headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
+            if not headers.get("authorization"):
+                for part in query.split("&"):
+                    if part.startswith("k="):
+                        from urllib.parse import unquote
+                        scope = dict(scope)
+                        scope["headers"] = list(scope["headers"]) + [
+                            (b"authorization", f"Bearer {unquote(part[2:])}".encode())]
+                        break
+            return await self.app(scope, receive, send)
 
         headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
         presented = headers.get("authorization", "")
@@ -389,6 +421,16 @@ def create_app(settings: Settings, storage: Storage):
     global RT
     RT = Runtime(settings, storage)
 
+    base = settings.public_base_url or f"http://{settings.host}:{settings.port}"
+    provider = None
+    if settings.oauth:
+        from .oauth import WhatsAppOAuth
+
+        provider = WhatsAppOAuth(RT, base)
+        mcp.auth = provider
+        RT.oauth = provider
+        log.info("OAuth enabled — connectors can pair by scanning the QR")
+
     app = mcp.http_app(
         transport="http",
         stateless_http=True,
@@ -405,6 +447,13 @@ def create_app(settings: Settings, storage: Storage):
     @asynccontextmanager
     async def lifespan(a):
         await RT.start()
+        if provider is not None and settings.auth_token:
+            # The configured token becomes an ordinary, non-expiring access
+            # token. One code path validates everything, and curl keeps working.
+            await RT.store.put_kv(f"oauth.token.{settings.auth_token}", {
+                "token": settings.auth_token, "client_id": "static",
+                "scopes": [], "expires_at": None, "subject": "static-token",
+            })
         try:
             async with prior_lifespan(a):
                 yield
@@ -415,7 +464,7 @@ def create_app(settings: Settings, storage: Storage):
 
     if settings.auth_token:
         log.info("bearer auth enabled")
-        return Auth(app, settings.auth_token)
+        return Auth(app, settings.auth_token, oauth=bool(provider))
     log.warning("WA_AUTH_TOKEN is not set — this server is UNAUTHENTICATED. "
                 "Fine on localhost, never behind a tunnel.")
     return app

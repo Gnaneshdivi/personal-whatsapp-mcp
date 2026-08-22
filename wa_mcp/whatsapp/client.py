@@ -88,6 +88,7 @@ class WhatsApp:
         self._retried: dict[str, float] = {}   # bounded, see _mark_retried
         self._tasks: list[asyncio.Task] = []
         self._stopped = asyncio.Event()
+        self.load_error: str | None = None
 
     # ==================================================== lifecycle
 
@@ -95,13 +96,43 @@ class WhatsApp:
         from neonize.aioze.client import ClientFactory
         return ClientFactory(self.session_dsn)
 
+    @staticmethod
+    def preflight() -> str | None:
+        """Why neonize cannot load, in words someone can act on.
+
+        neonize imports python-magic at module load, which dlopens the native
+        libmagic. When that is absent the failure surfaces as an ImportError
+        deep inside a pairing attempt — which, swallowed, looks exactly like a
+        QR that never arrives. Checking at startup turns a mystery into an
+        install command.
+        """
+        try:
+            import neonize  # noqa: F401
+            return None
+        except ImportError as exc:
+            if "libmagic" in str(exc):
+                import sys
+                fix = ("brew install libmagic" if sys.platform == "darwin"
+                       else "sudo apt-get install -y libmagic1")
+                return (f"libmagic is not installed, so neonize cannot load.\n"
+                        f"  Fix it with:  {fix}")
+            return f"neonize cannot be imported: {exc}"
+        except Exception as exc:
+            return f"neonize cannot be imported: {type(exc).__name__}: {exc}"
+
     def paired_devices(self) -> list[str]:
-        """JIDs already in the session store. Empty means we have never paired."""
+        """JIDs already in the session store. Empty means we have never paired.
+
+        A failure here used to be logged at debug and returned as [] — which is
+        indistinguishable from "not paired yet", so a broken install presented
+        as an install that simply never finished pairing.
+        """
         try:
             self._factory = self._factory or self._build_factory()
             return [J.from_obj(getattr(d, "JID", None)) for d in self._factory.get_all_devices()]
         except Exception as exc:
-            log.debug("device enumeration failed: %s", exc)
+            self.load_error = self.preflight() or f"{type(exc).__name__}: {exc}"
+            log.error("cannot read the session store: %s", self.load_error)
             return []
 
     async def start(self) -> bool:
@@ -120,10 +151,17 @@ class WhatsApp:
     async def pair(self) -> None:
         """Open a provisional socket with no device, so WhatsApp issues a QR.
 
+        Raises with an actionable message rather than hanging when the native
+        dependency is missing.
+
         `jid=None` is correct here and ONLY here — it is the one case where we
         genuinely have no device yet. Everywhere else an explicit JID is what
         stops a second client hijacking the first.
         """
+        blocked = self.preflight()
+        if blocked:
+            self.load_error = blocked
+            raise SendFailed(blocked)
         if self.paired_devices():
             raise SendFailed("a number is already linked; log out before pairing another")
         self._open(jid_str=None)

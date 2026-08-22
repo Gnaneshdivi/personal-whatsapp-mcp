@@ -173,6 +173,10 @@ class Settings:
     store_raw_proto: bool = False
     device_os: str = "Chrome"
     device_platform: str = "CHROME"
+    # OAuth turns the connector flow into "click Connect, scan, done". The
+    # static token still works alongside it, which is what keeps localhost and
+    # curl simple.
+    oauth: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -185,6 +189,7 @@ class Settings:
             store_raw_proto=_flag("WA_STORE_RAW_PROTO", False),
             device_os=os.getenv("WA_DEVICE_OS", "Chrome"),
             device_platform=os.getenv("WA_DEVICE_PLATFORM", "CHROME"),
+            oauth=_flag("WA_OAUTH", True),
         )
 
 

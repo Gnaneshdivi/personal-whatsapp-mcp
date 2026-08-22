@@ -179,6 +179,16 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
 
     async def connect(request):
         st = rt.status()
+        flow = request.query_params.get("flow", "")
+
+        # An OAuth flow that is already satisfied — the number was linked before
+        # the client asked — should not make the user scan again. Hand the code
+        # straight back.
+        if flow and st["number"] and rt.oauth is not None:
+            back = await rt.oauth.complete_flow(flow)
+            if back:
+                return Response(status_code=303, headers={"location": back})
+
         if st["number"]:
             return HTMLResponse(_page("Connected", f"""
 <div style="display:grid;place-items:center;height:100vh;text-align:center">
@@ -190,7 +200,18 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
             try:
                 await rt.wa.pair()
             except Exception as exc:
-                log.debug("pair: %s", exc)
+                # Show it. Swallowing this rendered a spinner forever while the
+                # real cause was a one-line install command.
+                log.error("pairing could not start: %s", exc)
+                return HTMLResponse(_page("Cannot pair", f"""
+<div style="display:grid;place-items:center;height:100vh;padding:24px">
+ <div style="max-width:480px">
+  <h2 style="color:#f15c6d;font-size:17px">Pairing cannot start</h2>
+  <pre style="white-space:pre-wrap;background:#182229;padding:14px;border-radius:8px;
+       font-size:13px">{_esc(exc)}</pre>
+  <p style="color:#8696a0;font-size:13px">Fix it, restart the server, then reload
+     this page.</p>
+ </div></div>"""), status_code=503)
             for _ in range(30):
                 if rt.wa.qr:
                     break
@@ -205,6 +226,11 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
 
         svg = segno.make_qr(qr).svg_inline(scale=8, border=3, dark="#000", light="#fff")
         svg = svg if isinstance(svg, str) else svg.decode()
+        # During an OAuth flow the page polls for the pairing and then hands the
+        # browser back to whoever started it. Without this the user scans, sees
+        # a chat list, and the connector sits waiting forever.
+        after = (f"fetch('/api/flow/{_esc(flow)}').then(r=>r.json()).then(d=>{{"
+                 f"if(d.redirect) location.href=d.redirect;}});") if flow else ""
         return HTMLResponse(_page("Link WhatsApp", f"""
 <div style="display:grid;place-items:center;height:100vh;padding:20px">
  <div style="text-align:center;max-width:420px">
@@ -221,11 +247,23 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
  </div></div>
 <script>
  // Pause the reload while the copy panel is open, or it clears the selection.
- setInterval(() => {{ if(!document.querySelector("details[open]")) location.reload(); }}, 4000);
+ setInterval(() => {{
+   {after}
+   if(!document.querySelector("details[open]")) location.reload();
+ }}, 4000);
 </script>"""))
 
     async def status_api(request):
         return JSONResponse(rt.status())
+
+    async def flow_api(request):
+        """Has this OAuth flow's pairing completed? If so, where to send them."""
+        if rt.oauth is None:
+            return JSONResponse({"redirect": None})
+        if not rt.status()["number"]:
+            return JSONResponse({"redirect": None, "waiting": True})
+        back = await rt.oauth.complete_flow(request.path_params["flow"])
+        return JSONResponse({"redirect": back})
 
     async def settings_page(request):
         st = rt.status()
@@ -522,6 +560,7 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         Route("/c/{jid}", chat),
         Route("/connect", connect),
         Route("/api/status", status_api),
+        Route("/api/flow/{flow}", flow_api),
         Route("/settings", settings_page),
         Route("/api/settings", settings_api, methods=["POST"]),
         Route("/api/test-reply", test_reply_api, methods=["POST"]),

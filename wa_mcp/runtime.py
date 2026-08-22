@@ -54,6 +54,7 @@ class Runtime:
         self.contacts = ContactBook(self.storage.session_dsn, self.storage.session_is_file)
         self.wa = None            # built lazily: importing neonize loads 21MB of Go
         self.trigger = None       # built in start(), needs the store connected
+        self.oauth = None         # set by create_app when OAuth is on
         self._subscribers: list = []
 
     # ------------------------------------------------------------- lifecycle
@@ -78,6 +79,13 @@ class Runtime:
             contacts=self.contacts,
             on_event=self._fanout,
         )
+        blocked = self.wa.preflight()
+        if blocked:
+            # Loud, and at startup — not at the moment someone is staring at a
+            # spinner wondering why no QR appeared.
+            for line in blocked.splitlines():
+                log.error("%s", line)
+
         connected = await self.wa.start()
         if connected:
             log.info("connecting existing session")
@@ -156,6 +164,7 @@ class Runtime:
                 "session_persisted_as_file": self.storage.session_is_file,
             },
             "contacts_loaded": self.contacts.loaded,
+            "blocked": getattr(self.wa, "load_error", None) if self.wa else None,
             "auto_reply": self._auto_reply_status(),
         }
 
