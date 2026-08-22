@@ -214,8 +214,6 @@ button.sm{padding:6px 12px;font-size:13px;font-weight:500}
 .pill{font-size:12px;padding:2px 10px;border-radius:11px;background:#2a3942;color:#8696a0;
       font-weight:500}
 .pill.on{background:#00a884;color:#111b21}
-.warn{background:#3a2f14;border:1px solid #6b5320;color:#f0d18a;padding:10px 13px;
-      border-radius:9px;font-size:13px;margin-top:12px}
 
 /* chooser modal */
 .mask{position:fixed;inset:0;background:#000b;display:none;place-items:center;z-index:60}
@@ -243,10 +241,6 @@ def build(rt, q: str, status: dict) -> str:
 
     state = ('<span class="pill on">active</span>' if ar["active"]
              else f'<span class="pill">idle — {esc(ar["reason"] or "off")}</span>')
-    gate = "" if status["ready"] else (
-        '<div class="warn">Still syncing. Settings save now, but replies stay held '
-        'until history finishes — otherwise the first thing this does is answer '
-        'weeks of old messages at once.</div>')
 
     # --- backend ---------------------------------------------------------
     backend = section("Auto-reply", (
@@ -481,7 +475,7 @@ def build(rt, q: str, status: dict) -> str:
             "The alerts about replies appear only once auto-reply is on.")
 
     body = (f'<div class="wrap"><a href="/{q}">&larr; Back to chats</a>'
-            f'<h1>Settings {state}</h1>{gate}'
+            f'<h1>Settings {state}</h1>'
             f'<form id="f">{backend}{model}{webhook}{guards}{fallback}{scope}{media}{notify}</form>'
             f'</div>'
             f'<div class="bar"><button type="button" id="save">Save</button>'
@@ -575,7 +569,8 @@ $("#save").onclick = async () => {
     const d = await r.json();
     if (!d.ok) return show("Error: " + (d.error || r.status), false);
     show(d.would_fire ? "Saved. Replies are live."
-                      : "Saved. Not firing: " + (d.blocked_by || "—"), true);
+                      : "Saved, but not replying yet: "
+                        + (d.blocked_by || "reason unavailable"), true);
   } catch (e) { show("Save failed: " + e.message, false); }
 };
 

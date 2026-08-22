@@ -160,3 +160,32 @@ async def test_documented_tags_match_what_the_engine_substitutes():
     documented = {t.strip("{}") for t, _ in TOKENS}
     assert documented <= real, f"documented but not substituted: {documented - real}"
     assert real <= documented, f"substituted but undocumented: {real - documented}"
+
+
+async def test_saving_during_a_sync_says_why_it_is_not_replying(client):
+    """"Not firing: —" told nobody anything.
+
+    Two separate things hold a reply back: settings that are not usable, and
+    the sync gate. Only the first carried a reason, so a valid config saved
+    while history was still arriving reported a blank one.
+    """
+    from wa_mcp.app import RT
+
+    live = dict(FULL, enabled=True, backend="model")
+    live["model"] = dict(FULL["model"], api_key="sk-live")
+    live["reply"] = dict(FULL["reply"], personal="all")
+
+    r = await client.post(f"/api/settings{K}", json=live)
+    d = r.json()
+    assert d["ok"] is True
+    # Unpaired in tests, so the gate is shut and it must say so.
+    assert d["would_fire"] is False
+    assert d["blocked_by"], "not firing with no reason given"
+    assert "syncing" in d["blocked_by"] or "off" in d["blocked_by"]
+
+
+async def test_an_unusable_config_still_names_the_missing_piece(client):
+    r = await client.post(f"/api/settings{K}", json=dict(FULL, enabled=True,
+                                                         backend="webhook",
+                                                         webhook={"url": ""}))
+    assert "webhook url" in r.json()["blocked_by"]

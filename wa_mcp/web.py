@@ -293,9 +293,20 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
             raw["model"]["api_key"] = cur.model.api_key
         merged = TriggerSettings.from_dict(raw)
         await rt.trigger.save(merged)
+        # Two independent things stop a reply: the settings not being usable,
+        # and the sync gate still being closed. Only the first had a reason
+        # attached, so a perfectly good config saved during a sync reported
+        # "not firing" with nothing after the colon.
         ok, why = merged.ready()
-        return JSONResponse({"ok": True, "would_fire": ok and rt.status()["ready"],
-                             "blocked_by": why})
+        synced = rt.status()["ready"]
+        if not ok:
+            blocked = why
+        elif not synced:
+            blocked = "still syncing"
+        else:
+            blocked = ""
+        return JSONResponse({"ok": True, "would_fire": ok and synced,
+                             "blocked_by": blocked})
 
     async def media(request):
         """Serve an attachment, fetching and caching it on first request."""
