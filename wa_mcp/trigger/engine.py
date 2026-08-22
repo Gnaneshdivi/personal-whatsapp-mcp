@@ -17,7 +17,7 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from ..whatsapp import jid as J
-from .backends import (BackendError, Context, extract_images, fetch_image,
+from .backends import (BackendError, Context, extract_media, fetch_media,
                        render, reply_via_model, reply_via_webhook)
 from .settings import TriggerSettings
 
@@ -30,12 +30,12 @@ class Decision:
     reason: str
     reply: str | None = None
     backend: str | None = None
-    images: int = 0
+    media: int = 0
     notified: str | None = None
 
     def public(self) -> dict:
         return {"fired": self.fired, "reason": self.reason,
-                "backend": self.backend, "images": self.images,
+                "backend": self.backend, "media": self.media,
                 "notified": self.notified,
                 "reply_preview": (self.reply or "")[:120] or None}
 
@@ -179,11 +179,11 @@ class TriggerEngine:
         if handoff:
             text = text.replace(marker, "").strip()
 
-        images: list[str] = []
-        if self.settings.send_images:
-            text, images = extract_images(text)
+        media: list[str] = []
+        if self.settings.send_media:
+            text, media = extract_media(text)
 
-        if not text and not images:
+        if not text and not media:
             return self._record(Decision(False, "backend returned an empty reply",
                                          backend=backend))
         limit = self.settings.reply.max_reply_chars
@@ -197,7 +197,7 @@ class TriggerEngine:
         self._cooldown[chat] = time.monotonic()
         self._recent_hour.append(time.monotonic())
 
-        sent_images = 0
+        sent_media = 0
         try:
             if self.settings.show_typing:
                 await self.rt.wa.set_typing(chat, True)
@@ -205,7 +205,7 @@ class TriggerEngine:
                 sent = await self.rt.wa.send_text(chat, text)
                 if sent.get("message_id"):
                     self.note_generated(sent["message_id"])
-            sent_images = await self._send_images(chat, images)
+            sent_media = await self._send_media(chat, media)
         except Exception as exc:
             return self._record(Decision(False, f"send failed: {exc}", text, backend))
         finally:
@@ -220,7 +220,7 @@ class TriggerEngine:
             notified = await self._notify(msg, "the assistant asked for a human")
 
         return self._record(Decision(True, "sent", text, backend,
-                                     images=sent_images,
+                                     media=sent_media,
                                      notified=notified or watched))
 
     async def _watch(self, msg: Inbound) -> str | None:
@@ -243,26 +243,26 @@ class TriggerEngine:
 
     # ------------------------------------------------------------ outputs
 
-    async def _send_images(self, chat: str, urls: list[str]) -> int:
-        """Fetch each image and send it as a photo.
+    async def _send_media(self, chat: str, urls: list[str]) -> int:
+        """Fetch each attachment and send it as the right kind.
 
         One failure does not sink the rest, and never the text that already
-        went out — a broken image URL should cost an attachment, not the reply.
+        went out — a broken URL should cost an attachment, not the reply.
         """
         import base64
 
         n = 0
         for url in urls[:4]:
             try:
-                data, _ctype = await fetch_image(
-                    url, self.settings.max_image_bytes, self._http)
+                data, _ctype, kind = await fetch_media(
+                    url, self.settings.max_media_bytes, self._http)
                 sent = await self.rt.wa.send_media(
-                    chat, base64.b64encode(data).decode(), "image")
+                    chat, base64.b64encode(data).decode(), kind)
                 if sent.get("message_id"):
                     self.note_generated(sent["message_id"])
                 n += 1
             except Exception as exc:
-                log.warning("image %s not sent: %s", url, exc)
+                log.warning("media %s not sent: %s", url, exc)
         return n
 
     async def _say(self, msg: Inbound, text: str) -> None:

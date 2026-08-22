@@ -260,56 +260,88 @@ async def reply_via_webhook(cfg: WebhookBackend, ctx: Context,
     return text.strip()
 
 
-# ---------------------------------------------------------------- images
+# ----------------------------------------------------------------- media
 
-_IMG = re.compile(
-    r"""(?:!\[[^\]]*\]\(\s*(https?://[^\s)]+)\s*\))"""     # markdown image
-    r"""|(https?://[^\s<>"']+\.(?:png|jpe?g|gif|webp)(?:\?[^\s<>"']*)?)""",
+# Extensions grouped by how WhatsApp wants them sent. A model that produces a
+# chart, a voice clip and a PDF should get all three delivered as attachments,
+# not as three links the recipient has to tap.
+MEDIA_KINDS = {
+    "image": ("png", "jpg", "jpeg", "gif", "webp"),
+    "video": ("mp4", "mov", "webm", "mkv"),
+    "audio": ("mp3", "ogg", "oga", "m4a", "wav", "opus"),
+    "document": ("pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+                 "csv", "txt", "zip", "json"),
+}
+_EXT_KIND = {ext: kind for kind, exts in MEDIA_KINDS.items() for ext in exts}
+_ALL_EXT = "|".join(_EXT_KIND)
+
+_MEDIA = re.compile(
+    r"""(?:!?\[[^\]]*\]\(\s*(https?://[^\s)]+)\s*\))"""    # markdown link or image
+    r"""|(https?://[^\s<>"']+\.(?:""" + _ALL_EXT + r""")(?:\?[^\s<>"']*)?)""",
     re.IGNORECASE,
 )
 
 
-def extract_images(text: str) -> tuple[str, list[str]]:
-    """Pull image URLs out of a reply, and return the text without them.
+def kind_for(url: str, content_type: str = "") -> str:
+    """What to send this as. The URL extension decides, the MIME type breaks ties.
 
-    Models that generate pictures hand back a markdown image or a bare URL. Sent
-    verbatim that is a link the recipient has to tap; downloaded and attached it
-    is a photo in the conversation, which is what anyone actually wanted.
+    Falls back to document, because sending an unknown blob as a file always
+    works, while sending it as a photo fails outright.
+    """
+    ext = re.sub(r"[?#].*$", "", url or "").rsplit(".", 1)[-1].lower()
+    if ext in _EXT_KIND:
+        return _EXT_KIND[ext]
+    major = (content_type or "").split("/")[0].strip().lower()
+    return major if major in ("image", "video", "audio") else "document"
+
+
+def extract_media(text: str) -> tuple[str, list[str]]:
+    """Pull media URLs out of a reply, and return the text without them.
+
+    Models hand back a markdown link or a bare URL. Sent verbatim that is a
+    link the recipient has to tap; downloaded and attached it is a photo, a
+    voice note or a document in the conversation, which is what was wanted.
     """
     urls: list[str] = []
-    for m in _IMG.finditer(text or ""):
+    for m in _MEDIA.finditer(text or ""):
         url = m.group(1) or m.group(2)
         if url and url not in urls:
             urls.append(url)
-    cleaned = _IMG.sub("", text or "")
+    cleaned = _MEDIA.sub("", text or "")
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned).strip()
     return cleaned, urls
 
 
-async def fetch_image(url: str, max_bytes: int,
-                      client: httpx.AsyncClient | None = None) -> tuple[bytes, str]:
-    """Download an image, refusing anything too large or not an image.
+async def fetch_media(url: str, max_bytes: int,
+                      client: httpx.AsyncClient | None = None) -> tuple[bytes, str, str]:
+    """Download an attachment, refusing anything too large.
 
-    The size and content-type checks are the point: this fetches a URL a model
-    produced, so it must not be trusted to be small or to be a picture.
+    The size check is the point: this fetches a URL a model produced, so it
+    must not be trusted to be small. The type is no longer required to be an
+    image -- anything unrecognised is sent as a document, which always works.
+
+    Returns (bytes, content_type, kind).
     """
     own = client is None
     client = client or httpx.AsyncClient(timeout=30.0, follow_redirects=True)
     try:
         r = await client.get(url)
         if r.status_code >= 400:
-            raise BackendError(f"image fetch returned HTTP {r.status_code}")
+            raise BackendError(f"media fetch returned HTTP {r.status_code}")
         ctype = (r.headers.get("content-type") or "").split(";")[0].strip().lower()
-        if not ctype.startswith("image/"):
-            raise BackendError(f"{url} is {ctype or 'unknown'}, not an image")
+        # A page, not an attachment. Any type is allowed now that documents are
+        # supported, but HTML back from a media URL means an error page or a
+        # login wall, and sending that as a .html file helps nobody.
+        if ctype in ("text/html", "application/xhtml+xml"):
+            raise BackendError(f"{url} returned a web page, not a file")
         data = r.content
         if len(data) > max_bytes:
-            raise BackendError(f"image is {len(data)} bytes, over the {max_bytes} limit")
-        return data, ctype
+            raise BackendError(f"media is {len(data)} bytes, over the {max_bytes} limit")
+        return data, ctype, kind_for(url, ctype)
     except BackendError:
         raise
     except Exception as exc:
-        raise BackendError(f"image fetch failed: {exc}") from exc
+        raise BackendError(f"media fetch failed: {exc}") from exc
     finally:
         if own:
             await client.aclose()

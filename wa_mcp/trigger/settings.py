@@ -233,8 +233,8 @@ class TriggerSettings:
     notify: Notify = field(default_factory=Notify)
     # A reply carrying an image URL is downloaded and sent as a photo rather
     # than as a link. Off by default: it fetches whatever URL a model emits.
-    send_images: bool = False
-    max_image_bytes: int = 8 * 1024 * 1024
+    send_media: bool = False
+    max_media_bytes: int = 8 * 1024 * 1024
     # Typing indicators cost nothing and are most of what makes an automated
     # reply read as a person rather than a bot posting instantly.
     show_typing: bool = True
@@ -261,8 +261,12 @@ class TriggerSettings:
             reply=_build(ReplyScope, raw.get("reply")),
             guardrails=_build(Guardrails, raw.get("guardrails")),
             notify=_build(Notify, raw.get("notify")),
-            send_images=bool(raw.get("send_images", False)),
-            max_image_bytes=int(raw.get("max_image_bytes", 8 * 1024 * 1024)),
+            # send_images was the name before this covered video,
+            # audio and documents; still read so an existing saved
+            # config keeps working across the upgrade.
+            send_media=bool(raw.get("send_media", raw.get("send_images", False))),
+            max_media_bytes=int(raw.get("max_media_bytes",
+                                        raw.get("max_image_bytes", 8 * 1024 * 1024))),
             show_typing=bool(raw.get("show_typing", True)),
         )
 

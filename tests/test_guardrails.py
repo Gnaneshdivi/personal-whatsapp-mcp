@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from wa_mcp.store.sqlite import SQLiteStore
-from wa_mcp.trigger.backends import extract_images
+from wa_mcp.trigger.backends import extract_media, kind_for
 from wa_mcp.trigger.engine import Inbound, TriggerEngine
 from wa_mcp.trigger.settings import Guardrails, TriggerSettings
 from wa_mcp.whatsapp.contacts import ContactBook
@@ -235,17 +235,17 @@ async def test_the_notification_carries_the_reason_and_who_it_was(rt):
     assert "human" in alert
 
 
-# ============================================================ images
+# ============================================================= media
 
-def test_image_extraction_handles_markdown_and_bare_urls():
-    text, urls = extract_images("here you go ![cat](https://x.io/c.png) enjoy")
+def test_media_extraction_handles_markdown_and_bare_urls():
+    text, urls = extract_media("here you go ![cat](https://x.io/c.png) enjoy")
     assert urls == ["https://x.io/c.png"]
     assert text == "here you go enjoy"
 
-    text, urls = extract_images("see https://y.io/a.jpg?v=2 ok")
+    text, urls = extract_media("see https://y.io/a.jpg?v=2 ok")
     assert urls == ["https://y.io/a.jpg?v=2"]
 
-    assert extract_images("plain text") == ("plain text", [])
+    assert extract_media("plain text") == ("plain text", [])
 
 
 async def test_generated_image_is_downloaded_and_sent_as_a_photo(rt):
@@ -258,24 +258,24 @@ async def test_generated_image_is_downloaded_and_sent_as_a_photo(rt):
         return httpx.Response(200, content=png, headers={"content-type": "image/png"})
 
     eng = TriggerEngine(rt)
-    eng.settings = settings(send_images=True)
+    eng.settings = settings(send_media=True)
     eng._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     d = await eng.consider(inbound())
-    assert d.fired is True and d.images == 1
+    assert d.fired is True and d.media == 1
     assert rt.wa.media == [("911@s.whatsapp.net", "image")]
     assert "https://img.test" not in rt.wa.sent[0][1]
 
 
 async def test_images_are_left_as_links_when_the_flag_is_off(rt):
     eng = TriggerEngine(rt)
-    eng.settings = settings(send_images=False)
+    eng.settings = settings(send_media=False)
     eng._http = model(reply="look ![](https://img.test/a.png)")
     d = await eng.consider(inbound())
-    assert d.images == 0 and rt.wa.media == []
+    assert d.media == 0 and rt.wa.media == []
     assert "img.test" in rt.wa.sent[0][1]
 
 
-async def test_a_non_image_url_is_refused(rt):
+async def test_a_web_page_is_refused(rt):
     async def handler(request):
         if "chat/completions" in str(request.url):
             return httpx.Response(200, json={"choices": [{"message": {
@@ -283,10 +283,10 @@ async def test_a_non_image_url_is_refused(rt):
         return httpx.Response(200, content=b"<html>", headers={"content-type": "text/html"})
 
     eng = TriggerEngine(rt)
-    eng.settings = settings(send_images=True)
+    eng.settings = settings(send_media=True)
     eng._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     d = await eng.consider(inbound())
-    assert d.fired is True and d.images == 0     # text still went, image did not
+    assert d.fired is True and d.media == 0     # text still went, file did not
     assert rt.wa.media == []
 
 
@@ -299,10 +299,10 @@ async def test_an_oversized_image_is_refused(rt):
                               headers={"content-type": "image/png"})
 
     eng = TriggerEngine(rt)
-    eng.settings = settings(send_images=True, max_image_bytes=1000)
+    eng.settings = settings(send_media=True, max_media_bytes=1000)
     eng._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     d = await eng.consider(inbound())
-    assert d.images == 0 and rt.wa.media == []
+    assert d.media == 0 and rt.wa.media == []
 
 
 async def test_an_image_only_reply_still_sends(rt):
@@ -315,10 +315,10 @@ async def test_an_image_only_reply_still_sends(rt):
         return httpx.Response(200, content=png, headers={"content-type": "image/png"})
 
     eng = TriggerEngine(rt)
-    eng.settings = settings(send_images=True)
+    eng.settings = settings(send_media=True)
     eng._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     d = await eng.consider(inbound())
-    assert d.fired is True and d.images == 1
+    assert d.fired is True and d.media == 1
     assert rt.wa.sent == []          # nothing to say, only a picture
 
 
@@ -332,7 +332,7 @@ async def test_sent_images_are_registered_against_the_loop_guard(rt):
         return httpx.Response(200, content=png, headers={"content-type": "image/png"})
 
     eng = TriggerEngine(rt)
-    eng.settings = settings(send_images=True)
+    eng.settings = settings(send_media=True)
     eng._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     await eng.consider(inbound())
     assert "i1" in eng._generated
@@ -424,3 +424,53 @@ async def test_our_own_messages_never_trigger_a_watch(rt):
         "notify": {"jid": "919999999999", "on_keywords": ["urgent"]}})
     d = await eng.consider(inbound("urgent", is_from_me=True))
     assert d.notified is None
+
+
+# --------------------------------------------------- media beyond images
+
+def test_each_kind_is_routed_to_the_right_sender():
+    """WhatsApp needs to be told what an attachment is.
+
+    Sending a voice note as a photo does not degrade -- it fails. Anything
+    unrecognised becomes a document, which always works.
+    """
+    assert kind_for("https://x.io/chart.png") == "image"
+    assert kind_for("https://x.io/clip.mp4") == "video"
+    assert kind_for("https://x.io/note.ogg") == "audio"
+    assert kind_for("https://x.io/report.pdf") == "document"
+    assert kind_for("https://x.io/thing.bin") == "document"
+
+
+def test_the_mime_type_breaks_ties_when_there_is_no_extension():
+    """Signed URLs and CDN redirects routinely arrive with no extension."""
+    assert kind_for("https://x.io/download?id=9", "image/png") == "image"
+    assert kind_for("https://x.io/download?id=9", "audio/mpeg") == "audio"
+    assert kind_for("https://x.io/download?id=9", "") == "document"
+
+
+def test_a_query_string_does_not_hide_the_extension():
+    assert kind_for("https://x.io/a.mp4?token=abc&x=1") == "video"
+
+
+def test_extraction_picks_up_documents_and_audio_not_just_pictures():
+    text, urls = extract_media("the report https://x.io/q3.pdf and a note "
+                               "[voice](https://x.io/v.ogg)")
+    assert urls == ["https://x.io/q3.pdf", "https://x.io/v.ogg"]
+    assert "x.io" not in text
+
+
+async def test_a_pdf_is_sent_as_a_document(rt):
+    """The end-to-end shape of the change: a non-image lands as an attachment."""
+    async def handler(request):
+        if "chat/completions" in str(request.url):
+            return httpx.Response(200, json={"choices": [{"message": {
+                "content": "here [report](https://img.test/q3.pdf)"}}]})
+        return httpx.Response(200, content=b"%PDF-1.4 ...",
+                              headers={"content-type": "application/pdf"})
+
+    eng = TriggerEngine(rt)
+    eng.settings = settings(send_media=True)
+    eng._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    d = await eng.consider(inbound())
+    assert d.fired is True and d.media == 1
+    assert rt.wa.media == [("911@s.whatsapp.net", "document")]
