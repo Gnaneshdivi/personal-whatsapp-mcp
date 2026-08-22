@@ -52,8 +52,9 @@ a{color:#53bdeb;text-decoration:none}
 .m .t{font-size:11px;color:#8696a0;margin-top:3px;text-align:right}
 .m .s{font-size:12px;color:#53bdeb;margin-bottom:2px}
 .empty{margin:auto;color:#8696a0;text-align:center;padding:40px}
-.qr{background:#fff;padding:14px;border-radius:12px;display:inline-block;line-height:0}
-.qr svg{display:block;width:min(70vw,300px);height:auto}
+.qr{background:#fff;padding:16px;border-radius:14px;line-height:0;
+    width:min(86vw,420px);box-sizing:content-box;margin:0 auto}
+.qr svg{display:block;width:100%;height:auto}
 code{background:#182229;padding:2px 5px;border-radius:4px;font-size:12px;word-break:break-all}
 .set{max-width:720px;margin:0 auto;padding:28px 20px 60px}
 .set h1{font-size:20px;margin:0 0 6px}
@@ -79,6 +80,24 @@ code{background:#182229;padding:2px 5px;border-radius:4px;font-size:12px;word-br
 
 def _esc(s) -> str:
     return html.escape(str(s or ""))
+
+
+def qr_svg(payload: str) -> str:
+    """Render a pairing code as a responsive inline SVG.
+
+    `omitsize=True` is the whole trick. segno's default emits
+    `width="690" height="690"` and NO viewBox, so CSS `width` resizes the
+    element box while the drawing stays at its intrinsic 690px and spills out
+    of whatever contains it. With a viewBox and no fixed dimensions the code
+    scales to its container, which is what every other image on the web does.
+
+    border=4 is the spec's minimum quiet zone. At 3 the finder patterns sit too
+    close to the edge and some scanners refuse the code — it looks fine and
+    simply will not read.
+    """
+    svg = segno.make_qr(payload).svg_inline(
+        scale=10, border=4, dark="#000", light="#fff", omitsize=True)
+    return svg if isinstance(svg, str) else svg.decode()
 
 
 def _page(title: str, body: str) -> str:
@@ -190,11 +209,9 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
                 return Response(status_code=303, headers={"location": back})
 
         if st["number"]:
-            return HTMLResponse(_page("Connected", f"""
-<div style="display:grid;place-items:center;height:100vh;text-align:center">
- <div><h2 style="color:#00a884">&#10003; Connected</h2>
- <p style="font-family:monospace">{_esc(st['number'])}</p>
- <p><a href="/{_q(request)}">Open chats</a></p></div></div>"""))
+            # Straight into the app. A "Connected" screen with a link is a step
+            # nobody wants after they have already succeeded.
+            return Response(status_code=303, headers={"location": f"/{_q(request)}"})
 
         if rt.wa is not None and not rt.wa.qr:
             try:
@@ -224,8 +241,7 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
 <div style="text-align:center"><p>Preparing a code&hellip;</p></div></div>
 <script>setTimeout(()=>location.reload(),2000)</script>"""))
 
-        svg = segno.make_qr(qr).svg_inline(scale=8, border=3, dark="#000", light="#fff")
-        svg = svg if isinstance(svg, str) else svg.decode()
+        svg = qr_svg(qr)
         # During an OAuth flow the page polls for the pairing and then hands the
         # browser back to whoever started it. Without this the user scans, sees
         # a chat list, and the connector sits waiting forever.
@@ -238,6 +254,7 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
   <div class="qr">{svg}</div>
   <p style="color:#8696a0;font-size:13px">
     WhatsApp &rarr; Settings &rarr; Linked devices &rarr; Link a device</p>
+  <p id="phase" style="color:#00a884;font-size:13px">Waiting for you to scan&hellip;</p>
   <details style="text-align:left;margin-top:14px">
    <summary style="color:#53bdeb;font-size:13px;cursor:pointer">Copy the code as text</summary>
    <p><code>{_esc(qr)}</code></p>
@@ -247,9 +264,16 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
  </div></div>
 <script>
  // Pause the reload while the copy panel is open, or it clears the selection.
- setInterval(() => {{
+ // Poll status rather than blind-reloading: a reload while pairing is in
+ // flight used to start a second client.
+ setInterval(async () => {{
    {after}
-   if(!document.querySelector("details[open]")) location.reload();
+   const s = await (await fetch("/api/status{_q(request)}")).json();
+   if (s.number) {{ location.href = "/{_q(request)}"; return; }}
+   const el = document.getElementById("phase");
+   if (el) el.textContent = s.phase === "pairing"
+     ? "Waiting for you to scan…" : ("Status: " + s.phase);
+   if (!document.querySelector("details[open]") && !s.number) location.reload();
  }}, 4000);
 </script>"""))
 

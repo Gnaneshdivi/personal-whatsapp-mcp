@@ -107,3 +107,20 @@ async def test_non_lid_never_hits_the_resolver():
 
     r = J.Resolver(lookup)
     assert await r.canonical("919812345678@s.whatsapp.net") == "919812345678@s.whatsapp.net"
+
+
+# ------------------------------------------ device JIDs are NOT chat JIDs
+
+def test_normalise_strips_the_device_number_and_that_is_the_point():
+    """For a chat key the suffix is noise — it splits one conversation into
+    several. For a DEVICE lookup it is essential: whatsmeow stores the linked
+    device as 919100828649:9 and finds nothing under 919100828649, returns nil,
+    and NewClient dereferences it — a Go panic that kills the process, because
+    Python cannot catch one.
+
+    This test exists to make that asymmetry impossible to forget: normalise()
+    is lossy by design, so a device JID must never travel through it.
+    """
+    device = "919100828649:9@s.whatsapp.net"
+    assert J.normalise(device) == "919100828649@s.whatsapp.net"
+    assert J.normalise(device) != device        # the device number is gone

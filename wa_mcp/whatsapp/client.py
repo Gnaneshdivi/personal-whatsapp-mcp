@@ -76,7 +76,8 @@ class WhatsApp:
         self._on_event = on_event
 
         self.sync = SyncTracker()
-        self.self_jid: str = ""
+        self.self_jid: str = ""      # normalised, for chat keys and display
+        self.device_jid = None       # raw protobuf, what whatsmeow needs
         self.push_name: str = ""
         self.qr: str | None = None
         self.qr_issued_at: float = 0.0
@@ -89,6 +90,13 @@ class WhatsApp:
         self._tasks: list[asyncio.Task] = []
         self._stopped = asyncio.Event()
         self.load_error: str | None = None
+        # One pairing attempt at a time, process-wide. Two clients on one
+        # session store is the failure this whole codebase is arranged to
+        # avoid: they both connect, their QR refs invalidate each other, one
+        # of them pairs, and the UI ends up watching the other — which is
+        # exactly what happened the first time this ran for real.
+        self._pair_lock = asyncio.Lock()
+        self._pairing = False
 
     # ==================================================== lifecycle
 
@@ -120,30 +128,47 @@ class WhatsApp:
         except Exception as exc:
             return f"neonize cannot be imported: {type(exc).__name__}: {exc}"
 
-    def paired_devices(self) -> list[str]:
-        """JIDs already in the session store. Empty means we have never paired.
+    def _device_jids(self) -> list:
+        """The raw JID protobufs from the session store.
 
-        A failure here used to be logged at debug and returned as [] — which is
-        indistinguishable from "not paired yet", so a broken install presented
-        as an install that simply never finished pairing.
+        Raw, and never round-tripped through a string. A device JID carries a
+        device NUMBER — 919100828649:9 — and `J.normalise` strips it, because
+        for a chat key the suffix is noise that splits one conversation into
+        several. Hand that stripped form back to whatsmeow and it finds no such
+        device, returns nil, and NewClient dereferences it: a Go panic that
+        takes the whole process down, since Python cannot catch one.
+
+        Two correct-looking functions, opposite requirements. Keeping the
+        protobuf means the question never comes up.
         """
         try:
             self._factory = self._factory or self._build_factory()
-            return [J.from_obj(getattr(d, "JID", None)) for d in self._factory.get_all_devices()]
+            return [d.JID for d in self._factory.get_all_devices() if d.HasField("JID")]
         except Exception as exc:
             self.load_error = self.preflight() or f"{type(exc).__name__}: {exc}"
             log.error("cannot read the session store: %s", self.load_error)
             return []
 
+    def paired_devices(self) -> list[str]:
+        """Human-readable JIDs of linked devices. For display and for tests.
+
+        A failure here used to be logged at debug and returned as [] — which is
+        indistinguishable from "not paired yet", so a broken install presented
+        as an install that simply never finished pairing.
+        """
+        return [J.from_obj(j) for j in self._device_jids()]
+
     async def start(self) -> bool:
         """Connect the already-paired number. False when there is nothing to connect."""
-        devices = self.paired_devices()
+        devices = self._device_jids()
         if not devices:
             self.sync.unpaired()
             return False
 
-        self.self_jid = devices[0]
-        self._open(jid_str=self.self_jid)
+        device = devices[0]
+        self.device_jid = device                 # raw, for whatsmeow
+        self.self_jid = J.from_obj(device)       # normalised, for chats and display
+        self._open(device=device)
         self.sync.connecting()
         await self._connect()
         return True
@@ -158,19 +183,27 @@ class WhatsApp:
         genuinely have no device yet. Everywhere else an explicit JID is what
         stops a second client hijacking the first.
         """
-        blocked = self.preflight()
-        if blocked:
-            self.load_error = blocked
-            raise SendFailed(blocked)
-        if self.paired_devices():
-            raise SendFailed("a number is already linked; log out before pairing another")
-        self._open(jid_str=None)
-        self.sync.pairing()
-        await self._connect()
+        async with self._pair_lock:
+            if self._pairing:
+                # Already offering a code. The caller gets that one rather than
+                # a rival socket whose QR would invalidate it.
+                return
+            blocked = self.preflight()
+            if blocked:
+                self.load_error = blocked
+                raise SendFailed(blocked)
+            if self.paired_devices():
+                raise SendFailed(
+                    "a number is already linked; log out before pairing another")
+            self._pairing = True
+            self._open(device=None)
+            self.sync.pairing()
+            await self._connect()
 
-    def _open(self, jid_str: str | None) -> None:
+    def _open(self, device=None) -> None:
+        """Build the neonize client. `device` is a raw JID protobuf, or None to
+        pair a new one — the only case where no device is correct."""
         from neonize.proto.waCompanionReg.WAWebProtobufsCompanionReg_pb2 import DeviceProps
-        from neonize.utils import build_jid
 
         self._factory = self._factory or self._build_factory()
 
@@ -184,13 +217,8 @@ class WhatsApp:
                 platformType=DeviceProps.PlatformType.Value(self.settings.device_platform),
             )
 
-        jid = None
-        if jid_str:
-            user, _, server = jid_str.partition("@")
-            jid = build_jid(user, server or J.USER_SERVER)
-
         self._client = self._factory.new_client(
-            jid=jid, uuid=None if jid else "pairing", props=props
+            jid=device, uuid=None if device is not None else "pairing", props=props
         )
         self._resolver = J.Resolver(self._lookup_pn)
         self._wire()
@@ -297,6 +325,8 @@ class WhatsApp:
 
     async def _on_connected(self, _ev) -> None:
         self.sync.connected()
+        self._pairing = False
+        self.qr = None
         if not self.self_jid:
             try:
                 me = await self._client.get_me()
@@ -316,6 +346,7 @@ class WhatsApp:
         if jid:
             self.self_jid = jid
             self.qr = None
+            self._pairing = False
             log.info("paired as %s", jid)
             await self._emit("connection.paired", {"phone_jid": jid})
 
