@@ -23,10 +23,13 @@ or a live account.
 """
 from __future__ import annotations
 
+import logging
 import secrets
 import time
 
 from .whatsapp import jid as J
+
+log = logging.getLogger(__name__)
 
 # Everything a reply legitimately needs, and nothing else. Each of these takes
 # the destination as `to`, which is what makes confining them to one chat
@@ -169,6 +172,12 @@ class Scope:
         auth = headers.get("authorization", "")
         token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
         record = await load(self.rt.store, token) if token else None
+        # Who is calling /mcp and as what. A connector that cannot see the
+        # tools looks identical to one that never connected, and without this
+        # there is nothing in the log either way.
+        log.info("mcp call: subject=%s scoped=%s",
+                 (record or {}).get("subject", "unknown-or-rejected"),
+                 bool(record and (record.get("delivery_chat") or record.get("routine"))))
         if not record or not (record.get("delivery_chat") or record.get("routine")):
             return await self.app(scope, receive, send)   # full token, or none
 
