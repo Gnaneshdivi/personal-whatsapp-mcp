@@ -298,7 +298,7 @@ def build(rt, q: str, status: dict) -> str:
                                                 t.model.timeout_seconds, "0.5"),
               "A reply that takes longer than this is abandoned. WhatsApp is a "
               "live conversation — a late answer reads worse than none.")
-    ), when="backend=model")
+    ), when="enabled&backend=model")
 
     # --- webhook ---------------------------------------------------------
     hdrs = "\n".join(f"{k}: {v}" for k, v in (t.webhook.headers or {}).items())
@@ -328,7 +328,7 @@ def build(rt, q: str, status: dict) -> str:
                                                 t.webhook.timeout_seconds, "0.5"),
               "Your endpoint gets this long to answer before the attempt is "
               "abandoned.")
-    ), when="backend=webhook")
+    ), when="enabled&backend=webhook")
 
     # --- guardrails ------------------------------------------------------
     g = t.guardrails
@@ -489,14 +489,19 @@ function show(msg, good) {
 }
 
 /* ---- progressive disclosure ---------------------------------------- */
-/* data-when="enabled" shows while that checkbox is on; data-when="a=b"
-   while that control equals b. Rows and whole sections use the same rule. */
+/* data-when="enabled" shows while that checkbox is on; data-when="a=b" while
+   that control equals b. Join with & to require both -- the model and webhook
+   blocks are "enabled&backend=model", because with auto-reply off there is no
+   backend in play and neither block should be on screen. Rows and whole
+   sections use the same rule. */
 function sync() {
   for (const el of document.querySelectorAll("[data-when]")) {
-    const [name, want] = el.dataset.when.split("=");
-    const src = document.querySelector(`[name="${name}"]`);
-    if (!src) continue;
-    const on = src.type === "checkbox" ? src.checked : src.value === want;
+    const on = el.dataset.when.split("&").every(cond => {
+      const [name, want] = cond.split("=");
+      const src = document.querySelector(`[name="${name}"]`);
+      if (!src) return true;
+      return src.type === "checkbox" ? src.checked : src.value === want;
+    });
     el.classList.toggle("hide", !on);
   }
 }
