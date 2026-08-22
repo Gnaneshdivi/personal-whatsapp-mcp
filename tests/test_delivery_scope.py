@@ -159,7 +159,7 @@ async def test_the_gate_refuses_over_http_not_just_in_theory(app_client):
 
     r = await app_client.post("/mcp", json=call("wa_list_chats", {}), headers=hdr)
     assert r.status_code == 403
-    assert "not available to a delivery token" in r.text
+    assert "not available to this token" in r.text
 
     r = await app_client.post("/mcp", json=call("wa_send", {"to": OTHER, "text": "x"}),
                               headers=hdr)
@@ -184,3 +184,73 @@ async def test_the_full_token_still_reaches_everything(app_client):
     r = await app_client.post("/mcp", json=call("wa_list_chats", {}),
                               headers={"Authorization": "Bearer t0ken"})
     assert r.status_code != 403
+
+
+# ------------------------------------------------- the routine's own token
+
+async def test_a_routine_token_alone_cannot_send(store):
+    """The connector's credential authorises nothing by itself.
+
+    A routine authenticates once, at setup, with whatever its connector was
+    configured with — it cannot pick up the per-delivery token from its own
+    input. So the standing token has to be the weak one, and the per-message
+    token is what turns it into permission to send.
+    """
+    from wa_mcp.delivery import mint_routine
+
+    tok = await mint_routine(store)
+    rec = await load(store, tok)
+    why = refusal(rec, "tools/call", "wa_send", {"to": CHAT})
+    assert why and "needs a live reply_token" in why
+
+
+async def test_a_routine_token_plus_a_live_delivery_may_reply(store):
+    from wa_mcp.delivery import mint_routine
+
+    rec = await load(store, await mint_routine(store))
+    delivery = await load(store, await mint(store, CHAT, 300))
+    assert refusal(rec, "tools/call", "wa_send", {"to": CHAT}, delivery) is None
+
+
+async def test_a_routine_cannot_redirect_a_live_delivery(store):
+    """The injected "forward this to 9199…" case, with a real token in hand."""
+    from wa_mcp.delivery import mint_routine
+
+    rec = await load(store, await mint_routine(store))
+    delivery = await load(store, await mint(store, CHAT, 300))
+    why = refusal(rec, "tools/call", "wa_send", {"to": OTHER}, delivery)
+    assert why and OTHER in why
+
+
+async def test_a_routine_still_cannot_read_anything(store):
+    from wa_mcp.delivery import mint_routine
+
+    rec = await load(store, await mint_routine(store))
+    delivery = await load(store, await mint(store, CHAT, 300))
+    for tool in ("wa_list_chats", "wa_search", "wa_get_messages"):
+        assert refusal(rec, "tools/call", tool, {}, delivery) is not None
+
+
+async def test_an_expired_delivery_does_not_authorise_a_routine(store):
+    """Replaying yesterday's token must not work."""
+    from wa_mcp.delivery import mint_routine
+
+    rec = await load(store, await mint_routine(store))
+    tok = await mint(store, CHAT, 300)
+    raw = await store.get_kv(f"oauth.token.{tok}")
+    raw["expires_at"] = time.time() - 1
+    await store.put_kv(f"oauth.token.{tok}", raw)
+    assert await load(store, tok) is None          # the gate would pass None
+    assert refusal(rec, "tools/call", "wa_send", {"to": CHAT}, None) is not None
+
+
+async def test_the_reply_tools_accept_the_argument():
+    """If fastmcp rejects the kwarg first, the gate's decision never runs."""
+    import inspect
+
+    from wa_mcp import app as A
+
+    for name in ("wa_send", "wa_send_media", "wa_typing"):
+        fn = getattr(A, name)
+        fn = getattr(fn, "fn", fn)
+        assert "reply_token" in inspect.signature(fn).parameters, name

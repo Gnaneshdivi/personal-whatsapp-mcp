@@ -63,6 +63,32 @@ async def mint(store, chat_jid: str, ttl_seconds: int) -> str:
     return token
 
 
+async def mint_routine(store) -> str:
+    """A standing credential for a routine's connector.
+
+    A routine authenticates with whatever token its connector was configured
+    with, once, at setup — it cannot pick up the per-delivery token from its
+    own input. So a routine holding an ordinary token is unrestricted, and the
+    delivery token in the payload protects nothing.
+
+    This is the shape that survives that: the connector's own token can call
+    only the reply tools, and only when the call carries a reply_token from a
+    live delivery. An injected "just send it without the token" is refused
+    because the token is what authorises sending at all; an injected "send it
+    to this other number" is refused because the reply_token names the chat.
+    """
+    token = secrets.token_urlsafe(32)
+    await store.put_kv(_kv(token), {
+        "token": token,
+        "client_id": "routine",
+        "scopes": ["reply"],
+        "subject": "routine",
+        "routine": True,
+        "expires_at": None,          # standing; revoke by deleting the row
+    })
+    return token
+
+
 async def load(store, token: str) -> dict | None:
     """The stored record, or None when it is unknown or expired."""
     if not token:
@@ -77,25 +103,35 @@ async def load(store, token: str) -> dict | None:
 
 
 def refusal(record: dict | None, method: str, tool: str,
-            arguments: dict | None) -> str | None:
+            arguments: dict | None, delivery: dict | None = None) -> str | None:
     """Why this call is not allowed, or None if it is.
 
     `record` is the token's stored form. Anything without `delivery_chat` is an
     ordinary full-access token and is never restricted here.
     """
-    if not record or not record.get("delivery_chat"):
+    routine = bool(record and record.get("routine"))
+    if not record or not (record.get("delivery_chat") or routine):
         return None                      # a full token; not our business
 
     if method in PROTOCOL_METHODS:
         return None
     if method != "tools/call":
-        return f"{method} is not available to a delivery token"
+        return f"{method} is not available to this token"
 
     if tool not in REPLY_TOOLS:
-        return (f"{tool} is not available to a delivery token — it may only "
-                f"reply in the conversation it was issued for")
+        return (f"{tool} is not available to this token — it may only reply "
+                f"in the conversation it was issued for")
 
-    allowed = record["delivery_chat"]
+    if routine:
+        # The connector's own token authorises nothing on its own. Sending
+        # requires proof that a real message arrived, and that proof names the
+        # chat, so neither "send without it" nor "send it elsewhere" works.
+        if not delivery:
+            return ("this call needs a live reply_token — pass the one from "
+                    "the message payload")
+        allowed = delivery["delivery_chat"]
+    else:
+        allowed = record["delivery_chat"]
     target = J.normalise(str((arguments or {}).get("to") or ""))
     if not target:
         return "no destination given"
@@ -103,7 +139,7 @@ def refusal(record: dict | None, method: str, tool: str,
         # The whole point. An injected "message this to 9199..." arrives here
         # as an ordinary, well-formed call — the only thing that distinguishes
         # it from a legitimate reply is the destination.
-        return (f"this token may only reply to {allowed}, not {target}")
+        return f"this token may only reply to {allowed}, not {target}"
     return None
 
 
@@ -133,7 +169,7 @@ class Scope:
         auth = headers.get("authorization", "")
         token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
         record = await load(self.rt.store, token) if token else None
-        if not record or not record.get("delivery_chat"):
+        if not record or not (record.get("delivery_chat") or record.get("routine")):
             return await self.app(scope, receive, send)   # full token, or none
 
         body, more, size = b"", True, 0
@@ -147,7 +183,7 @@ class Scope:
                 return await _error(send, "request too large for a delivery token")
             more = msg.get("more_body", False)
 
-        why = self._check(body, record)
+        why = await self._check(body, record)
         if why:
             return await _error(send, why)
 
@@ -162,7 +198,7 @@ class Scope:
 
         return await self.app(scope, replay, send)
 
-    def _check(self, body: bytes, record: dict) -> str | None:
+    async def _check(self, body: bytes, record: dict) -> str | None:
         import json
 
         try:
@@ -174,8 +210,16 @@ class Scope:
             if not isinstance(call, dict):
                 continue
             params = call.get("params") or {}
+            args = params.get("arguments") or {}
+            # A routine proves the call belongs to a real inbound message by
+            # carrying the token that message was delivered with.
+            delivery = None
+            if record.get("routine") and args.get("reply_token"):
+                delivery = await load(self.rt.store, str(args["reply_token"]))
+                if delivery and not delivery.get("delivery_chat"):
+                    delivery = None
             why = refusal(record, call.get("method", ""),
-                          params.get("name", ""), params.get("arguments") or {})
+                          params.get("name", ""), args, delivery)
             if why:
                 return why
         return None

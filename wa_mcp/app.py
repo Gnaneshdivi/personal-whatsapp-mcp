@@ -247,7 +247,8 @@ async def wa_unread(chat: str = "") -> dict[str, Any]:
 # =============================================================== write
 
 @mcp.tool
-async def wa_send(to: str, text: str, reply_to: str = "") -> dict[str, Any]:
+async def wa_send(to: str, text: str, reply_to: str = "",
+                   reply_token: str = "") -> dict[str, Any]:
     """Send a text message.
 
     `to` may be a JID, an international phone number, or a contact name — if a
@@ -265,7 +266,8 @@ async def wa_send(to: str, text: str, reply_to: str = "") -> dict[str, Any]:
 
 @mcp.tool
 async def wa_send_media(to: str, media_base64: str, kind: str = "image",
-                        caption: str = "", filename: str = "") -> dict[str, Any]:
+                        caption: str = "", filename: str = "",
+                   reply_token: str = "") -> dict[str, Any]:
     """Send an image, video, audio, document or sticker.
 
     `media_base64` is the raw file bytes, base64-encoded.
@@ -301,7 +303,8 @@ async def wa_mark_read(chat: str, up_to_message_id: str = "") -> dict[str, Any]:
 
 
 @mcp.tool
-async def wa_typing(chat: str, typing: bool = True) -> dict[str, Any]:
+async def wa_typing(chat: str, typing: bool = True,
+                   reply_token: str = "") -> dict[str, Any]:
     """Show or clear the typing indicator in a chat.
 
     Worth doing before a slow reply — it is what makes an automated response
