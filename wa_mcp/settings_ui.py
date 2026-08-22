@@ -361,17 +361,23 @@ def build(rt, q: str, status: dict) -> str:
                                   "Be brief and formal. Never promise a date.",
                                   rows=3),
               "Added to the prompt verbatim.", wide=True)
-        + row("Message when refusing", text_in("guardrails.fallback_message",
-                                               g.fallback_message),
-              "Sent instead of an answer when a guardrail stops a reply.",
-              wide=True)
-        + row("Send it when blocked", toggle("guardrails.send_fallback_when_blocked",
-                                             g.send_fallback_when_blocked),
-              "Off, a blocked message gets silence.")
-        + row("Send it when the backend fails",
+    ), when="enabled")
+
+    # --- default message -------------------------------------------------
+    fallback = section("Default message", (
+        row("What to send", text_in("guardrails.fallback_message",
+                                    g.fallback_message),
+            "Sent in place of an answer when a reply is refused or fails. "
+            "Keep it something a stranger can act on — it is the only thing "
+            "they will see.", wide=True)
+        + row("Use it when a guardrail refuses",
+              toggle("guardrails.send_fallback_when_blocked",
+                     g.send_fallback_when_blocked),
+              "Off, a blocked message gets silence instead.")
+        + row("Use it when the backend fails",
               toggle("guardrails.send_fallback_on_error", g.send_fallback_on_error),
               "Off, an outage is invisible to the other person — usually better "
-              "than an apology for something they did not see break.")
+              "than apologising for something they did not see break.")
     ), when="enabled")
 
     # --- scope -----------------------------------------------------------
@@ -442,20 +448,26 @@ def build(rt, q: str, status: dict) -> str:
         + row("Watch groups too", toggle("notify.watch_groups", n.watch_groups), "")
         + row("When the assistant asks for a human",
               toggle("notify.on_handoff", n.on_handoff),
-              "The model can emit the marker below to escalate.")
-        + row("When a guardrail refuses", toggle("notify.on_blocked", n.on_blocked), "")
-        + row("When the backend fails", toggle("notify.on_error", n.on_error), "")
+              "The model can emit the marker below to escalate.",
+              when="enabled")
+        + row("When a guardrail refuses", toggle("notify.on_blocked", n.on_blocked),
+              "A guardrail is only evaluated while auto-reply is running.",
+              when="enabled")
+        + row("When the backend fails", toggle("notify.on_error", n.on_error),
+              "There is no backend to fail unless auto-reply is on.",
+              when="enabled")
         + row("Hand-off marker", text_in("notify.handoff_marker", n.handoff_marker),
-              "Stripped from the reply before it is sent.")
+              "Stripped from the reply before it is sent.", when="enabled")
         + row("Alert wording", area("notify.template", n.template, rows=4),
               TOKEN_HELP + "\n\n{{reason}} is why the alert fired, and is only "
               "meaningful here.", wide=True)
-    ), note="These work with auto-reply switched off — useful for watching a "
-            "number without answering on it.")
+    ), note="Keyword and contact watching runs with auto-reply switched off, "
+            "which is the useful case: watch a number without answering on it. "
+            "The alerts about replies appear only once auto-reply is on.")
 
     body = (f'<div class="wrap"><a href="/{q}">&larr; Back to chats</a>'
             f'<h1>Settings {state}</h1>{gate}'
-            f'<form id="f">{backend}{model}{webhook}{guards}{scope}{media}{notify}</form>'
+            f'<form id="f">{backend}{model}{webhook}{guards}{fallback}{scope}{media}{notify}</form>'
             f'</div>'
             f'<div class="bar"><button type="button" id="save">Save</button>'
             f'<button type="button" class="ghost" id="testb">Test backend</button>'
