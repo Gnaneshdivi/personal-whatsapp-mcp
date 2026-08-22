@@ -470,7 +470,6 @@ def build(rt, q: str, status: dict) -> str:
             f'<form id="f">{backend}{model}{webhook}{guards}{fallback}{scope}{media}{notify}</form>'
             f'</div>'
             f'<div class="bar"><button type="button" id="save">Save</button>'
-            f'<button type="button" class="ghost" id="testb">Test backend</button>'
             f'<div id="out"></div></div>'
             f'<div class="mask" id="mask"><div class="modal">'
             f'<header><input class="ctl" id="q" placeholder="Search name or number…" '
@@ -563,15 +562,6 @@ $("#save").onclick = async () => {
     show(d.would_fire ? "Saved. Replies are live."
                       : "Saved. Not firing: " + (d.blocked_by || "—"), true);
   } catch (e) { show("Save failed: " + e.message, false); }
-};
-
-$("#testb").onclick = async () => {
-  show("Testing…");
-  try {
-    const r = await fetch("/api/test-reply" + Q, {method: "POST"});
-    const d = await r.json();
-    show(d.ok ? "Backend replied:\n" + d.reply : "Failed: " + d.error, d.ok);
-  } catch (e) { show("Test failed: " + e.message, false); }
 };
 
 /* ---- the contact chooser -------------------------------------------- */

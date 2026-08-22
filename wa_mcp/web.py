@@ -297,22 +297,6 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         return JSONResponse({"ok": True, "would_fire": ok and rt.status()["ready"],
                              "blocked_by": why})
 
-    async def test_reply_api(request):
-        from .trigger.backends import Context, reply_via_model, reply_via_webhook
-        t = rt.trigger.settings
-        ctx = Context(message="hello, are you there?", chat_name="Test",
-                      chat_jid="test@s.whatsapp.net", sender_name="Test",
-                      sender_jid="test@s.whatsapp.net",
-                      me_name=getattr(rt.wa, "push_name", "") or "me",
-                      message_id="test", timestamp="0",
-                      history=[(False, "Test", "hello, are you there?")])
-        try:
-            reply = await (reply_via_model(t.model, ctx) if t.backend == "model"
-                           else reply_via_webhook(t.webhook, ctx))
-            return JSONResponse({"ok": True, "reply": reply})
-        except Exception as exc:
-            return JSONResponse({"ok": False, "error": str(exc)})
-
     async def media(request):
         """Serve an attachment, fetching and caching it on first request."""
         mid = request.path_params["mid"]
@@ -435,7 +419,6 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         Route("/api/flow/{flow}", flow_api),
         Route("/settings", settings_page),
         Route("/api/settings", settings_api, methods=["POST"]),
-        Route("/api/test-reply", test_reply_api, methods=["POST"]),
         Route("/qr.txt", qr_txt),
         Route("/media/{mid}", media),
         Route("/avatar/{jid}", avatar),
