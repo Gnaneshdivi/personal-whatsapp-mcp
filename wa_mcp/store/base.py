@@ -60,6 +60,9 @@ class Message:
     quoted_id: str | None = None
     edited_at: int | None = None
     revoked_at: int | None = None
+    # sent -> delivered -> read -> played. Only meaningful for our own messages.
+    status: str = "sent"
+    status_at: int | None = None
     raw_proto: bytes | None = None
 
     def public(self) -> dict[str, Any]:
@@ -78,6 +81,8 @@ class Message:
             "quoted_id": self.quoted_id,
             "edited": self.edited_at is not None,
             "revoked": self.revoked_at is not None,
+            "status": self.status if self.is_from_me else None,
+            "status_at": self.status_at,
         }
 
 
@@ -129,6 +134,15 @@ class Store(Protocol):
     async def apply_edit(self, message_id: str, text: str | None, ts: int) -> None: ...
     async def apply_revoke(self, message_id: str, ts: int) -> None: ...
     async def set_media_ref(self, message_id: str, ref: str) -> None: ...
+    async def set_status(self, message_ids: list[str], status: str,
+                         ts: int) -> list[str]:
+        """Advance delivery status. Returns the ids that actually moved.
+
+        Never goes backwards: receipts arrive out of order, and a DELIVERED
+        landing after a READ would otherwise un-read a message. Returning only
+        the ids that changed is what lets callers emit an event per real
+        transition rather than per receipt.
+        """
     async def touch_chat(self, chat_jid: str, ts: int, from_me: bool,
                          preview: str | None) -> None: ...
     async def upsert_chat_meta(self, chat_jid: str, *, name: str | None = None,
@@ -137,6 +151,16 @@ class Store(Protocol):
                                pinned: bool | None = None) -> None: ...
     async def set_unread(self, chat_jid: str, count: int) -> None:
         """Set an absolute count, for read state arriving from the phone."""
+
+    async def rebuild_rollups(self) -> int:
+        """Recompute last_message_ts and preview from the messages themselves.
+
+        `chats.last_message_ts` is a denormalised summary, and any summary can
+        drift from what it summarises. It did: 35 chats held today's messages
+        while their rollup was NULL, so the most recently active conversation
+        sorted to the bottom of the list. Rather than trust every write path to
+        maintain it perfectly, the truth is recomputed from the rows.
+        """
 
     # ---- reads ----
     async def list_chats(self, *, limit: int = 30, archived: bool = False,
@@ -207,3 +231,15 @@ def split_query(query: str) -> tuple[list[str], list[str]]:
         else:
             take(tok, negated)
     return include, exclude
+
+
+# Delivery status, in order. Comparing by index is what makes the transition
+# one-way — see Store.set_status.
+STATUS_ORDER = ("sent", "delivered", "read", "played")
+
+
+def status_rank(value: str) -> int:
+    try:
+        return STATUS_ORDER.index(value)
+    except ValueError:
+        return 0

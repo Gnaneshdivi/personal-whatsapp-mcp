@@ -21,7 +21,7 @@ from typing import Any
 
 import aiosqlite
 
-from .base import Chat, Message, Store, now_ms, split_query
+from .base import Chat, Message, Store, now_ms, split_query, status_rank
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS messages (
     quoted_id   TEXT,
     edited_at   INTEGER,
     revoked_at  INTEGER,
+    status      TEXT    NOT NULL DEFAULT 'sent',
+    status_at   INTEGER,
     raw_proto   BLOB
 );
 CREATE INDEX IF NOT EXISTS ix_messages_chat_ts ON messages(chat_jid, ts DESC);
@@ -88,7 +90,7 @@ END;
 
 _COLS = (
     "message_id, chat_jid, sender_jid, sender_name, is_from_me, ts, type, text, "
-    "media_ref, media_meta, quoted_id, edited_at, revoked_at"
+    "media_ref, media_meta, quoted_id, edited_at, revoked_at, status, status_at"
 )
 
 
@@ -104,7 +106,33 @@ class SQLiteStore(Store):
         self._db = await aiosqlite.connect(self.path)
         self._db.row_factory = aiosqlite.Row
         await self._db.executescript(SCHEMA)
+        await self._migrate()
         await self._db.commit()
+
+    # Columns added after the first release. CREATE TABLE IF NOT EXISTS does
+    # nothing to a table that already exists, so a new field is invisible to an
+    # existing database and every query referencing it fails.
+    #
+    # This exists because the alternative was taken once: the database was
+    # deleted to pick up a new column, and 6,225 messages went with it. History
+    # sync only ever runs at pair time, so that data could not be recovered
+    # without unlinking the number and scanning again. Additive migrations are
+    # not a nicety here — losing the store means losing history permanently.
+    MIGRATIONS = (
+        ("messages", "status", "TEXT NOT NULL DEFAULT 'sent'"),
+        ("messages", "status_at", "INTEGER"),
+        ("messages", "media_meta", "TEXT"),
+        ("chats", "pinned", "INTEGER NOT NULL DEFAULT 0"),
+    )
+
+    async def _migrate(self) -> None:
+        for table, column, decl in self.MIGRATIONS:
+            cols = {r["name"] for r in await (
+                await self._db.execute(f"PRAGMA table_info({table})")).fetchall()}
+            if not cols or column in cols:
+                continue
+            await self._db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+            log.info("migrated: added %s.%s", table, column)
 
     async def close(self) -> None:
         if self._db is not None:
@@ -129,12 +157,13 @@ class SQLiteStore(Store):
         """
         cur = await self.db.execute(
             f"INSERT OR IGNORE INTO messages ({_COLS}, raw_proto) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 m.message_id, m.chat_jid, m.sender_jid, m.sender_name,
                 int(m.is_from_me), m.ts, m.type, m.text, m.media_ref,
                 json.dumps(m.media_meta) if m.media_meta else None,
-                m.quoted_id, m.edited_at, m.revoked_at, m.raw_proto,
+                m.quoted_id, m.edited_at, m.revoked_at, m.status, m.status_at,
+                m.raw_proto,
             ),
         )
         await self.db.commit()
@@ -162,6 +191,26 @@ class SQLiteStore(Store):
             "UPDATE messages SET media_ref = ? WHERE message_id = ?", (ref, message_id)
         )
         await self.db.commit()
+
+    async def set_status(self, message_ids: list[str], status: str,
+                         ts: int) -> list[str]:
+        if not message_ids:
+            return []
+        rank = status_rank(status)
+        moved = []
+        for mid in message_ids:
+            row = await (await self.db.execute(
+                "SELECT status FROM messages WHERE message_id = ? AND is_from_me = 1",
+                (mid,))).fetchone()
+            if row is None or status_rank(row["status"]) >= rank:
+                continue
+            await self.db.execute(
+                "UPDATE messages SET status = ?, status_at = ? WHERE message_id = ?",
+                (status, ts, mid))
+            moved.append(mid)
+        if moved:
+            await self.db.commit()
+        return moved
 
     async def touch_chat(self, chat_jid: str, ts: int, from_me: bool,
                          preview: str | None) -> None:
@@ -198,6 +247,22 @@ class SQLiteStore(Store):
              int(bool(pinned)), *args),
         )
         await self.db.commit()
+
+    async def rebuild_rollups(self) -> int:
+        cur = await self.db.execute("""
+            UPDATE chats SET
+              last_message_ts = (SELECT MAX(m.ts) FROM messages m
+                                 WHERE m.chat_jid = chats.chat_jid),
+              last_message_text = (SELECT COALESCE(m.text, '[' || m.type || ']')
+                                   FROM messages m WHERE m.chat_jid = chats.chat_jid
+                                   ORDER BY m.ts DESC LIMIT 1)
+            WHERE EXISTS (SELECT 1 FROM messages m WHERE m.chat_jid = chats.chat_jid)
+              AND (chats.last_message_ts IS NULL
+                   OR chats.last_message_ts < (SELECT MAX(m.ts) FROM messages m
+                                               WHERE m.chat_jid = chats.chat_jid))
+        """)
+        await self.db.commit()
+        return cur.rowcount
 
     async def set_unread(self, chat_jid: str, count: int) -> None:
         """Absolute, not incremental — this is read state arriving from the phone.
@@ -362,6 +427,8 @@ def _msg(r: aiosqlite.Row) -> Message:
         text=r["text"], media_ref=r["media_ref"],
         media_meta=json.loads(r["media_meta"]) if r["media_meta"] else {},
         quoted_id=r["quoted_id"], edited_at=r["edited_at"], revoked_at=r["revoked_at"],
+        status=(r["status"] if "status" in r.keys() else "sent") or "sent",
+        status_at=r["status_at"] if "status_at" in r.keys() else None,
     )
 
 

@@ -15,7 +15,7 @@ import json
 import logging
 from typing import Any
 
-from .base import Chat, Message, Store, split_query
+from .base import Chat, Message, Store, split_query, status_rank
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS wa_messages (
     quoted_id   TEXT,
     edited_at   BIGINT,
     revoked_at  BIGINT,
+    status      TEXT NOT NULL DEFAULT 'sent',
+    status_at   BIGINT,
     raw_proto   BYTEA
 );
 CREATE INDEX IF NOT EXISTS ix_wa_messages_chat_ts ON wa_messages (chat_jid, ts DESC);
@@ -62,7 +64,7 @@ CREATE TABLE IF NOT EXISTS wa_kv (
 """
 
 _COLS = ("message_id, chat_jid, sender_jid, sender_name, is_from_me, ts, type, text, "
-         "media_ref, media_meta, quoted_id, edited_at, revoked_at")
+         "media_ref, media_meta, quoted_id, edited_at, revoked_at, status, status_at")
 
 
 class PostgresStore(Store):
@@ -95,12 +97,13 @@ class PostgresStore(Store):
         async with self.pool.acquire() as c:
             row = await c.fetchrow(
                 f"INSERT INTO wa_messages ({_COLS}, raw_proto) "
-                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) "
+                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) "
                 "ON CONFLICT (message_id) DO NOTHING RETURNING id",
                 m.message_id, m.chat_jid, m.sender_jid, m.sender_name,
                 m.is_from_me, m.ts, m.type, m.text, m.media_ref,
                 json.dumps(m.media_meta) if m.media_meta else None,
-                m.quoted_id, m.edited_at, m.revoked_at, m.raw_proto,
+                m.quoted_id, m.edited_at, m.revoked_at, m.status, m.status_at,
+                m.raw_proto,
             )
         return row is not None
 
@@ -120,6 +123,19 @@ class PostgresStore(Store):
         async with self.pool.acquire() as c:
             await c.execute("UPDATE wa_messages SET media_ref=$1 WHERE message_id=$2",
                             ref, message_id)
+
+    async def set_status(self, message_ids: list[str], status: str,
+                         ts: int) -> list[str]:
+        if not message_ids:
+            return []
+        order = ["sent", "delivered", "read", "played"][:status_rank(status)]
+        async with self.pool.acquire() as c:
+            rows = await c.fetch(
+                "UPDATE wa_messages SET status=$1, status_at=$2 "
+                "WHERE message_id = ANY($3::text[]) AND is_from_me "
+                "AND status = ANY($4::text[]) RETURNING message_id",
+                status, ts, list(message_ids), order)
+        return [r["message_id"] for r in rows]
 
     async def touch_chat(self, chat_jid: str, ts: int, from_me: bool,
                          preview: str | None) -> None:
@@ -157,6 +173,21 @@ class PostgresStore(Store):
                 "VALUES ($1,$2,$3,$4,$5) ON CONFLICT (chat_jid) DO UPDATE SET "
                 + ", ".join(sets),
                 chat_jid, name, bool(is_group), bool(archived), bool(pinned))
+
+    async def rebuild_rollups(self) -> int:
+        async with self.pool.acquire() as c:
+            res = await c.execute("""
+                UPDATE wa_chats ch SET
+                  last_message_ts = agg.mx,
+                  last_message_text = agg.txt
+                FROM (SELECT DISTINCT ON (chat_jid) chat_jid,
+                             MAX(ts) OVER (PARTITION BY chat_jid) mx,
+                             COALESCE(text, '[' || type || ']') txt
+                      FROM wa_messages ORDER BY chat_jid, ts DESC) agg
+                WHERE agg.chat_jid = ch.chat_jid
+                  AND (ch.last_message_ts IS NULL OR ch.last_message_ts < agg.mx)
+            """)
+        return int(str(res).split()[-1]) if res else 0
 
     async def set_unread(self, chat_jid: str, count: int) -> None:
         async with self.pool.acquire() as c:
@@ -291,6 +322,7 @@ def _msg(r) -> Message:
         sender_name=r["sender_name"], is_from_me=bool(r["is_from_me"]), ts=int(r["ts"]),
         type=r["type"], text=r["text"], media_ref=r["media_ref"], media_meta=meta or {},
         quoted_id=r["quoted_id"], edited_at=r["edited_at"], revoked_at=r["revoked_at"],
+        status=r["status"] or "sent", status_at=r["status_at"],
     )
 
 

@@ -23,6 +23,22 @@ most irritating thing a chat UI can do.
 """
 from __future__ import annotations
 
+ICONS = {
+    # Stroked 24x24 paths, currentColor. Emoji render differently on every
+    # platform and cannot be recoloured for an active state.
+    "chats": '<path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.5 8.5 0 0 1-3.8-.9L3 21l1.9-5.2A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/>',
+    "settings": '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 9 4.6a2 2 0 1 1 4 0 1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 11a2 2 0 1 1 0 4z"/>',
+    "tick": '<path d="M2 12.5 7 17l4-4"/>',
+    "ticks": '<path d="M1 12.5 5.5 17 14 8"/><path d="M8 12.5 12.5 17 21 8"/>',
+}
+
+
+def icon(name: str, size: int = 21) -> str:
+    return (f'<svg viewBox="0 0 24 24" width="{size}" height="{size}" fill="none" '
+            f'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" '
+            f'stroke-linejoin="round">{ICONS[name]}</svg>')
+
+
 CSS = """
 *{box-sizing:border-box}
 html,body{height:100%;margin:0;overflow:hidden}
@@ -31,9 +47,22 @@ body{font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-seri
 a{color:#53bdeb;text-decoration:none}
 button{font:inherit;cursor:pointer}
 
-.app{display:grid;grid-template-columns:minmax(300px,380px) 1fr;height:100vh}
+.app{display:grid;grid-template-columns:60px minmax(300px,380px) 1fr;height:100vh}
+
+/* far-left icon rail */
+.rail{background:#111b21;border-right:1px solid #222d34;display:flex;
+      flex-direction:column;align-items:center;padding:12px 0;gap:4px}
+.rail .sp{flex:1}
+.rail button{width:42px;height:42px;border:0;background:none;border-radius:50%;
+  color:#8696a0;font-size:19px;display:grid;place-items:center;position:relative}
+.rail button:hover{background:#202c33;color:#e9edef}
+.rail button.on{background:#2a3942;color:#00d9a5}
+.rail .me{width:34px;height:34px;border-radius:50%;overflow:hidden;background:#2a3942;
+  display:grid;place-items:center;font-size:14px;font-weight:600;color:#8696a0;
+  cursor:pointer;position:relative}
+.rail .me img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 @media(max-width:820px){
-  .app{grid-template-columns:1fr}
+  .app{grid-template-columns:52px 1fr}
   .pane{display:none}
   body.open .list{display:none}
   body.open .pane{display:grid}
@@ -75,6 +104,11 @@ button{font:inherit;cursor:pointer}
 .badge{background:#00a884;color:#111b21;border-radius:11px;min-width:20px;
        text-align:center;padding:1px 6px;font-size:12px;font-weight:600;flex:none}
 .pin{font-size:12px;opacity:.6;flex:none}
+.sec{padding:12px 16px 6px;font-size:12px;text-transform:uppercase;
+     letter-spacing:.08em;color:#00a884;font-weight:600}
+.row.hit{padding-left:16px}
+.row.hit .pv{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;
+             -webkit-box-orient:vertical;overflow:hidden}
 
 /* ---------------- right: conversation ---------------- */
 .pane{display:grid;grid-template-rows:auto 1fr auto;min-height:0;background:#0b141a}
@@ -94,7 +128,10 @@ button{font:inherit;cursor:pointer}
 .m+.m{margin-top:1px}
 .m.first{margin-top:9px}
 .m .s{font-size:12.5px;color:#53bdeb;margin-bottom:2px;font-weight:500}
-.m .t{font-size:11px;color:#8696a0;float:right;margin:6px 0 0 10px;line-height:1}
+.m .t{font-size:11px;color:#8696a0;float:right;margin:6px 0 0 10px;line-height:1;
+      display:inline-flex;align-items:center;gap:3px}
+.tk{display:inline-flex;color:#8696a0}
+.tk.rd{color:#53bdeb}
 .m img{max-width:100%;border-radius:6px;display:block;margin-bottom:4px}
 .day{align-self:center;background:#182229;color:#8696a0;font-size:12px;
      padding:4px 12px;border-radius:10px;margin:12px 0 6px}
@@ -108,6 +145,23 @@ button{font:inherit;cursor:pointer}
 .comp button:disabled{opacity:.45}
 
 .blank{display:grid;place-items:center;height:100%;color:#8696a0;text-align:center}
+.panel{overflow-y:auto;padding:26px 24px;min-height:0}
+.panel h2{font-size:17px;margin:0 0 4px}
+.panel .sub{color:#8696a0;font-size:13px;margin-bottom:22px}
+.card{background:#111b21;border:1px solid #222d34;border-radius:10px;
+      padding:16px 18px;margin-bottom:12px}
+.card h3{font-size:13px;text-transform:uppercase;letter-spacing:.07em;
+         color:#8696a0;margin:0 0 12px;font-weight:600}
+.kv{display:flex;justify-content:space-between;gap:16px;padding:7px 0;
+    border-bottom:1px solid #1b262d;font-size:14px}
+.kv:last-child{border-bottom:0}
+.kv span:last-child{color:#8696a0;text-align:right;word-break:break-all}
+.bigav{width:96px;height:96px;border-radius:50%;background:#2a3942;margin:0 auto 14px;
+  display:grid;place-items:center;font-size:34px;font-weight:600;color:#8696a0;
+  position:relative;overflow:hidden}
+.bigav img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.panel a.btn{display:inline-block;background:#00a884;color:#0b141a;border-radius:8px;
+  padding:9px 18px;font-weight:600;margin-top:6px}
 .sync{padding:9px 14px;background:#182229;font-size:13px;color:#8696a0;
       border-bottom:1px solid #222d34}
 .bar{height:3px;background:#222d34;border-radius:2px;margin-top:7px;overflow:hidden}
@@ -136,11 +190,29 @@ function when(iso) {
 }
 const dayKey = (iso) => new Date(iso).toDateString();
 
+const TICK_ONE = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+  stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
+  stroke-linejoin="round"><path d="M2 12.5 7 17l4-4"/></svg>`;
+const TICK_TWO = `<svg viewBox="0 0 24 24" width="17" height="15" fill="none"
+  stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
+  stroke-linejoin="round"><path d="M1 12.5 5.5 17 14 8"/><path d="M8 12.5 12.5 17 21 8"/></svg>`;
+
+// sent = one tick, delivered = two, read/played = two in blue. The colour is
+// the signal an agent acts on, so it is worth getting exactly right.
+function ticks(status) {
+  if (!status) return "";
+  const blue = (status === "read" || status === "played");
+  const mark = status === "sent" ? TICK_ONE : TICK_TWO;
+  return `<span class="tk${blue ? " rd" : ""}">${mark}</span>`;
+}
+
 /* ------------------------------------------------------------ chat list */
 
+let hits = [];
 async function loadChats() {
   const u = `/api/chats?limit=80&filter=${filter}` + (query ? `&q=${encodeURIComponent(query)}` : "");
-  chats = (await (await fetch(KA(u))).json()).chats;
+  const d = await (await fetch(KA(u))).json();
+  chats = d.chats; hits = d.messages || [];
   renderChats();
 }
 
@@ -157,7 +229,27 @@ function renderChats() {
           ${c.pinned ? '<span class="pin">📌</span>' : ""}
           ${c.unread ? `<span class="badge">${c.unread}</span>` : ""}</div>
       </div></div>`).join("")
-    || '<div class="blank" style="padding:40px">No chats</div>';
+    || (query ? "" : '<div class="blank" style="padding:40px">No chats</div>');
+
+  // Searching answers with two lists, like WhatsApp: who, then where it was said.
+  if (query) {
+    $("#rows").insertAdjacentHTML("afterbegin",
+      chats.length ? '<div class="sec">Chats</div>' : '<div class="sec">No matching chats</div>');
+    if (hits.length) {
+      $("#rows").insertAdjacentHTML("beforeend",
+        '<div class="sec">Messages</div>' + hits.map(m => `
+          <div class="row hit" data-jid="${esc(m.chat_jid)}">
+            <div class="mid">
+              <div class="top"><span class="nm">${esc(m.chat_name)}</span>
+                <span class="when">${when(m.timestamp)}</span></div>
+              <div class="bot"><span class="pv">${esc(m.sender_display)}: ${
+                esc((m.text||"").slice(0,90))}</span></div>
+            </div></div>`).join(""));
+    } else {
+      $("#rows").insertAdjacentHTML("beforeend",
+        '<div class="sec">No messages found</div>');
+    }
+  }
   document.querySelectorAll(".row").forEach(r =>
     r.onclick = () => openChat(r.dataset.jid));
 }
@@ -166,6 +258,8 @@ function renderChats() {
 
 async function openChat(jid) {
   current = jid; oldest = null;
+  $("#profile").style.display = "none";
+  $("#nav-chats").classList.add("on");
   document.body.classList.add("open");
   renderChats();
   const d = await (await fetch(KA(`/api/messages/${encodeURIComponent(jid)}?limit=40`))).json();
@@ -201,9 +295,10 @@ function bubble(m, prev) {
     ? '<i style="opacity:.6">This message was deleted</i>'
     : (m.text ? esc(m.text) : (img ? "" : `<i style="opacity:.6">[${esc(m.type)}]</i>`));
   const t = new Date(m.timestamp).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+  const tick = m.from_me ? ticks(m.status) : "";
   return `${day}<div class="m ${m.from_me ? "me" : ""} ${sameSpeaker ? "" : "first"}"
-      data-id="${esc(m.message_id)}">${who}${img}${body}<span class="t">${t}${
-      m.edited ? " ·edited" : ""}</span></div>`;
+      data-id="${esc(m.message_id)}" data-status="${esc(m.status||"")}">${who}${img}${body}<span class="t">${t}${
+      m.edited ? " ·edited" : ""}${tick}</span></div>`;
 }
 
 function paint(list, prepend) {
@@ -248,6 +343,13 @@ es.addEventListener("status", e => {
   const s = JSON.parse(e.data);
   $("#num").textContent = s.number || "";
   $("#pn").textContent = s.push_name || "WhatsApp";
+  const me = $("#nav-profile");
+  if (me && !me.dataset.set && s.number) {
+    me.dataset.set = "1";
+    me.innerHTML = esc((s.push_name || "?")[0].toUpperCase()) +
+      `<img src="${KA("/avatar/" + encodeURIComponent(s.number + "@s.whatsapp.net"))}"
+            onerror="this.remove()">`;
+  }
   $("#live").className = "dot" + (s.ready ? "" : " warn");
   const sy = $("#sync");
   if (s.ready) { sy.style.display = "none"; }
@@ -259,6 +361,14 @@ es.addEventListener("status", e => {
 });
 es.addEventListener("wa", async e => {
   const ev = JSON.parse(e.data);
+  if (ev.type && ev.type.startsWith("message.") &&
+      ["delivered","read","played"].includes(ev.status)) {
+    (ev.message_ids || []).forEach(id => {
+      const n = document.querySelector(`.m[data-id="${CSS.escape(id)}"] .t .tk`);
+      if (n) n.outerHTML = ticks(ev.status);
+    });
+    return;
+  }
   if (!["message.received","message.sent"].includes(ev.type)) return;
   loadChats();
   if (ev.chat_jid !== current) return;
@@ -313,6 +423,55 @@ $("#ta").addEventListener("input", e => {
 });
 $("#back").onclick = () => document.body.classList.remove("open");
 
+/* ---------------------------------------------------------------- nav */
+
+function showChats() {
+  $("#nav-chats").classList.add("on");
+  $("#profile").style.display = "none";
+  $("#pane").style.display = current ? "" : "none";
+  $("#blank").style.display = current ? "none" : "";
+}
+
+async function showProfile() {
+  $("#nav-chats").classList.remove("on");
+  $("#pane").style.display = "none";
+  $("#blank").style.display = "none";
+  const p = $("#profile");
+  p.style.display = "";
+  p.innerHTML = "<div class='sub'>Loading…</div>";
+  const s = await (await fetch(KA("/api/status"))).json();
+  const initial = (s.push_name || "?")[0].toUpperCase();
+  const jid = s.number ? s.number + "@s.whatsapp.net" : "";
+  p.innerHTML = `
+    <div style="max-width:520px;margin:0 auto">
+      <div class="bigav">${esc(initial)}${jid ? `<img src="${
+        KA("/avatar/" + encodeURIComponent(jid))}" onerror="this.remove()">` : ""}</div>
+      <h2 style="text-align:center">${esc(s.push_name || "WhatsApp")}</h2>
+      <div class="sub" style="text-align:center">+${esc(s.number || "")}</div>
+      <div class="card"><h3>Connection</h3>
+        <div class="kv"><span>Status</span><span>${s.ready ? "Connected" : esc(s.phase)}</span></div>
+        <div class="kv"><span>Sync</span><span>${s.sync.percent}% ${esc(s.sync.detail||"")}</span></div>
+        <div class="kv"><span>Contacts known</span><span>${s.contacts_known ?? 0}</span></div>
+      </div>
+      <div class="card"><h3>Auto-reply</h3>
+        <div class="kv"><span>Enabled</span><span>${s.auto_reply.enabled ? "yes" : "no"}</span></div>
+        <div class="kv"><span>Backend</span><span>${esc(s.auto_reply.backend)}</span></div>
+        <div class="kv"><span>Firing</span><span>${
+          s.auto_reply.active ? "yes" : "no — " + esc(s.auto_reply.reason || "")}</span></div>
+        <a class="btn" href="${KA("/settings")}">Open settings</a>
+      </div>
+      <div class="card"><h3>Storage</h3>
+        <div class="kv"><span>Backend</span><span>${esc(s.storage.backend)}</span></div>
+        <div class="kv"><span>Login on disk</span><span>${
+          s.storage.session_persisted_as_file ? "yes — must persist" : "in the database"}</span></div>
+      </div>
+    </div>`;
+}
+
+$("#nav-chats").onclick = showChats;
+$("#nav-profile").onclick = showProfile;
+$("#nav-settings").onclick = () => location.href = KA("/settings");
+
 loadChats();
 setInterval(loadChats, 20000);   // catches read state changed on the phone
 """
@@ -320,6 +479,12 @@ setInterval(loadChats, 20000);   // catches read state changed on the phone
 
 def shell(q: str) -> str:
     return f"""<div class="app">
+  <div class="rail">
+    <button id="nav-chats" class="on" title="Chats">{icon("chats")}</button>
+    <div class="sp"></div>
+    <button id="nav-settings" title="Settings">{icon("settings")}</button>
+    <div class="me" id="nav-profile" title="Profile"></div>
+  </div>
   <div class="list">
     <div class="lhead">
       <span class="dot" id="live"></span>
@@ -348,6 +513,7 @@ def shell(q: str) -> str:
     </div>
   </div>
   <div class="blank" id="blank">Select a chat to start reading</div>
+  <div class="panel" id="profile" style="display:none"></div>
 </div>
 <div class="sync" id="sync" style="display:none;position:fixed;bottom:0;left:0;
      right:0;z-index:5"></div>

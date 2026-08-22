@@ -211,15 +211,18 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
 
     async def chats_api(request):
         q = request.query_params
-        chats = await rt.store.list_chats(
-            limit=int(q.get("limit", 60)), archived=q.get("archived") == "1",
-            query=q.get("q") or None, kind=q.get("filter") or "all")
+        from .search import find_chats, find_messages
+        query = q.get("q") or ""
+        found = await find_chats(
+            rt, query=query, kind=q.get("filter") or "all",
+            limit=int(q.get("limit", 60)), archived=q.get("archived") == "1")
         out = []
-        for c in chats:
-            d = c.public()
-            d["name"] = rt.contacts.display_name(c.chat_jid, chat_name=c.name)
+        for c, name in found:
+            d = c.public(); d["name"] = name
             out.append(d)
-        return JSONResponse({"chats": out})
+        # One query, two lists — the same shape WhatsApp answers with.
+        messages = await find_messages(rt, query=query, limit=25) if query else []
+        return JSONResponse({"chats": out, "messages": messages})
 
     async def messages_api(request):
         """A page of history, oldest-first for direct rendering.
@@ -302,7 +305,7 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
 
         return HTMLResponse(_page("Settings", f"""
 <div class="set">
- <a href="/{_q(request)}" style="font-size:13px">&larr; chats</a>
+ <a href="/{_q(request)}" style="font-size:13px">&larr; Back to chats</a>
  <h1>Auto-reply {state}</h1>
  <p style="color:#8696a0;font-size:13px">Replies are off until you turn them on,
     per scope. This sends from your real number — bulk or unsolicited messages

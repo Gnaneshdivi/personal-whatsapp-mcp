@@ -21,7 +21,7 @@ import logging
 from typing import Any
 from urllib.parse import urlparse
 
-from .base import Chat, Message, Store, split_query
+from .base import Chat, Message, Store, split_query, status_rank
 
 log = logging.getLogger(__name__)
 
@@ -69,7 +69,8 @@ class MongoStore(Store):
             "is_from_me": bool(m.is_from_me), "ts": int(m.ts), "type": m.type,
             "text": m.text, "media_ref": m.media_ref, "media_meta": m.media_meta or {},
             "quoted_id": m.quoted_id, "edited_at": m.edited_at,
-            "revoked_at": m.revoked_at, "raw_proto": m.raw_proto,
+            "revoked_at": m.revoked_at, "status": m.status,
+            "status_at": m.status_at, "raw_proto": m.raw_proto,
         }
         try:
             await self.db.messages.insert_one(doc)
@@ -90,6 +91,21 @@ class MongoStore(Store):
     async def set_media_ref(self, message_id: str, ref: str) -> None:
         await self.db.messages.update_one(
             {"message_id": message_id}, {"$set": {"media_ref": ref}})
+
+    async def set_status(self, message_ids: list[str], status: str,
+                         ts: int) -> list[str]:
+        if not message_ids:
+            return []
+        lower = ["sent", "delivered", "read", "played"][:status_rank(status)]
+        moved = []
+        for mid in message_ids:
+            r = await self.db.messages.update_one(
+                {"message_id": mid, "is_from_me": True,
+                 "$or": [{"status": {"$in": lower}}, {"status": {"$exists": False}}]},
+                {"$set": {"status": status, "status_at": ts}})
+            if r.modified_count:
+                moved.append(mid)
+        return moved
 
     async def touch_chat(self, chat_jid: str, ts: int, from_me: bool,
                          preview: str | None) -> None:
@@ -125,6 +141,24 @@ class MongoStore(Store):
             {"chat_jid": chat_jid},
             {"$set": sets, "$setOnInsert": {"chat_jid": chat_jid, "unread_count": 0}},
             upsert=True)
+
+    async def rebuild_rollups(self) -> int:
+        n = 0
+        pipeline = [{"$sort": {"chat_jid": 1, "ts": -1}},
+                    {"$group": {"_id": "$chat_jid", "mx": {"$first": "$ts"},
+                                "txt": {"$first": "$text"},
+                                "typ": {"$first": "$type"}}}]
+        async for row in self.db.messages.aggregate(pipeline):
+            r = await self.db.chats.update_one(
+                {"chat_jid": row["_id"],
+                 "$or": [{"last_message_ts": None},
+                         {"last_message_ts": {"$lt": row["mx"]}},
+                         {"last_message_ts": {"$exists": False}}]},
+                {"$set": {"last_message_ts": row["mx"],
+                          "last_message_text": row.get("txt") or f"[{row.get('typ')}]"},
+                 "$setOnInsert": {"chat_jid": row["_id"]}}, upsert=True)
+            n += r.modified_count
+        return n
 
     async def set_unread(self, chat_jid: str, count: int) -> None:
         await self.db.chats.update_one(
@@ -244,6 +278,7 @@ def _msg(d: dict) -> Message:
         media_ref=d.get("media_ref"), media_meta=d.get("media_meta") or {},
         quoted_id=d.get("quoted_id"), edited_at=d.get("edited_at"),
         revoked_at=d.get("revoked_at"),
+        status=d.get("status") or "sent", status_at=d.get("status_at"),
     )
 
 

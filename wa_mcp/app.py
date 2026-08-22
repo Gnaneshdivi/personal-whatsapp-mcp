@@ -89,21 +89,14 @@ async def _resolve_chat(value: str) -> str:
     if "@" in value or value.lstrip("+").isdigit():
         return J.to_jid(value)
 
-    chats = await rt().store.list_chats(limit=500)
-    book = rt().contacts
-    matches = [
-        c for c in chats
-        if value.lower() in book.display_name(c.chat_jid, chat_name=c.name).lower()
-    ]
-    if not matches:
+    from .search import find_chats
+    found = await find_chats(rt(), query=value, limit=9)
+    if not found:
         raise ToolError(f"no chat matching {value!r}. Use wa_list_chats to see them.")
-    if len(matches) > 1:
-        listing = "\n".join(
-            f"    {book.display_name(c.chat_jid, chat_name=c.name)}  {c.chat_jid}"
-            for c in matches[:8]
-        )
-        raise ToolError(f"{len(matches)} chats match {value!r} — pass one:\n{listing}")
-    return matches[0].chat_jid
+    if len(found) > 1:
+        listing = "\n".join(f"    {name}  {c.chat_jid}" for c, name in found[:8])
+        raise ToolError(f"{len(found)} chats match {value!r} — pass one:\n{listing}")
+    return found[0][0].chat_jid
 
 
 def _chat_out(c) -> dict:
@@ -185,9 +178,10 @@ async def wa_list_chats(limit: int = 30, archived: bool = False,
     `query` filters by name — use it to find a chat before sending.
     """
     try:
-        chats = await rt().store.list_chats(limit=limit, archived=archived,
-                                            query=query or None)
-        return {"ok": True, "count": len(chats), "chats": [_chat_out(c) for c in chats]}
+        from .search import find_chats
+        found = await find_chats(rt(), query=query, limit=limit, archived=archived)
+        chats = [{**c.public(), "name": name} for c, name in found]
+        return {"ok": True, "count": len(chats), "chats": chats}
     except Exception as exc:
         return _fail(exc)
 
@@ -565,6 +559,28 @@ async def wa_reply_log(limit: int = 20) -> dict[str, Any]:
     try:
         entries = list(rt().trigger.log)[:limit]
         return {"ok": True, "count": len(entries), "decisions": entries}
+    except Exception as exc:
+        return _fail(exc)
+
+
+@mcp.tool
+async def wa_delivery_status(chat: str, limit: int = 20) -> dict[str, Any]:
+    """Delivery state of your recent messages in a chat: sent, delivered, read.
+
+    Use this to tell whether someone has actually seen a message. `read` is a
+    far stronger signal than `delivered` — it is the one worth acting on when
+    deciding to follow up or wait.
+    """
+    try:
+        jid = await _resolve_chat(chat)
+        msgs = await rt().store.get_messages(jid, limit=limit)
+        mine = [m for m in msgs if m.is_from_me]
+        return {"ok": True, "chat_jid": jid, "count": len(mine), "messages": [
+            {"message_id": m.message_id, "text": (m.text or "")[:120],
+             "status": m.status,
+             "status_at": (m.public()["timestamp"] if m.status_at else None),
+             "timestamp": m.public()["timestamp"]}
+            for m in mine]}
     except Exception as exc:
         return _fail(exc)
 

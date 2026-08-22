@@ -270,8 +270,12 @@ class WhatsApp:
                 try:
                     log.info("contacts: %d known after sync",
                              await self.contacts.load())
+                    await self.persist_contact_names()
+                    fixed = await self.store.rebuild_rollups()
+                    if fixed:
+                        log.info("repaired %d chat orderings", fixed)
                 except Exception:
-                    pass
+                    log.exception("post-sync repair failed")
             try:
                 await asyncio.wait_for(self._stopped.wait(), timeout=5)
             except asyncio.TimeoutError:
@@ -359,6 +363,8 @@ class WhatsApp:
                 pass
         loaded = await self.contacts.load()
         log.info("connected as %s (%d contacts)", self.self_jid or "?", loaded)
+        if loaded:
+            await self.persist_contact_names()
         # Group names arrive ONLY via group events, which do not always fire.
         # Asking outright is the difference between a readable chat list and 31
         # rows of numeric ids.
@@ -405,12 +411,14 @@ class WhatsApp:
         if stored:
             log.info("history: %d messages from %d conversations (%s)",
                      stored, len(conversations), name.lower())
+            await self.store.rebuild_rollups()
         # whatsmeow fills its contact store while history streams in, so the
         # book has to be re-read as it goes or every chat stays a phone number.
         before = len(self.contacts)
         after = await self.contacts.refresh_if_stale()
         if after > before:
             log.info("contacts: %d known", after)
+            await self.persist_contact_names()
 
     async def _ingest_conversation(self, conv) -> int:
         chat = await self._resolver.canonical(J.normalise(getattr(conv, "ID", "") or ""))
@@ -448,6 +456,14 @@ class WhatsApp:
             sender = J.normalise(getattr(info, "participant", "") or
                                  (self.self_jid if from_me else chat))
 
+            # History carries the real delivery state. Defaulting it to "sent"
+            # puts a single tick on a message that was read a year ago, which
+            # is worse than showing nothing: it is confidently wrong, and an
+            # agent deciding whether to follow up would act on it.
+            wa_status = _enum_name(info, "status")
+            status = {"DELIVERY_ACK": "delivered", "READ": "read",
+                      "PLAYED": "played"}.get(wa_status, "sent")
+
             if await self.store.upsert_message(Message(
                 message_id=getattr(key, "ID", "") or getattr(key, "id", ""),
                 chat_jid=chat, sender_jid=sender or None,
@@ -455,6 +471,7 @@ class WhatsApp:
                 is_from_me=from_me, ts=ts, type=msg_type, text=text,
                 media_meta=media or {},
                 quoted_id=extract.quoted_message_id(body),
+                status=status if from_me else "sent",
                 raw_proto=(body.SerializeToString()
                            if (self.settings.store_raw_proto or media) else None),
             )):
@@ -486,6 +503,30 @@ class WhatsApp:
                 await self.store.upsert_chat_meta(chat, name=gname, is_group=True)
         except Exception:
             log.exception("group event %s", name)
+
+    async def persist_contact_names(self) -> int:
+        """Write address-book names into chats.name.
+
+        The contact book lives in memory, so a WHERE clause could never see it
+        — searching "jyotish" returned nothing while the list plainly showed
+        "Vja Jyotish". Rather than filter in Python and have two answers to the
+        same question, the resolved name is written down, and SQLite becomes
+        the single source of truth for search.
+
+        Only fills blanks. A name that arrived from WhatsApp itself, or that a
+        user set, outranks the address book and is left alone.
+        """
+        written = 0
+        for chat in await self.store.list_chats(limit=5000):
+            if chat.name:
+                continue
+            name = self.contacts.get(chat.chat_jid)
+            if name:
+                await self.store.upsert_chat_meta(chat.chat_jid, name=name)
+                written += 1
+        if written:
+            log.info("named %d chats from the address book", written)
+        return written
 
     async def _backfill_group_names(self) -> None:
         try:
@@ -556,11 +597,15 @@ class WhatsApp:
             raw_proto=(body.SerializeToString()
                        if (self.settings.store_raw_proto or media) else None),
         ))
+        preview = extract.extract_text(body) or (f"[{msg_type}]" if msg_type != "text" else None)
+        # The rollup is refreshed even for a message we already had. A redelivery
+        # still tells us the chat is active, and returning early here is how 35
+        # conversations ended up holding today's messages behind a NULL
+        # timestamp — sorted to the bottom of the list. `from_me=True` on the
+        # duplicate path so the unread count is not incremented twice.
+        await self.store.touch_chat(chat, ts, bool(src.IsFromMe) or not stored, preview)
         if not stored:
             return
-
-        preview = extract.extract_text(body) or (f"[{msg_type}]" if msg_type != "text" else None)
-        await self.store.touch_chat(chat, ts, bool(src.IsFromMe), preview)
         await self.store.upsert_chat_meta(chat, is_group=J.is_group(chat))
 
         await self._emit("message.received" if not src.IsFromMe else "message.sent", {
@@ -601,9 +646,33 @@ class WhatsApp:
         a new contact sits on one tick forever.
         """
         kind = _enum_name(ev, "Type")
+        ids = [m for m in (getattr(ev, "MessageIDs", None) or [])]
+
+        # Delivery status. This is what lets an agent act on "they read it" —
+        # a message arriving is one signal, a message being READ is a different
+        # and often more useful one.
+        status = {"DELIVERED": "delivered", "READ": "read",
+                  "READ_SELF": "read", "PLAYED": "played",
+                  "PLAYED_SELF": "played"}.get(kind)
+        if status and ids:
+            ts = to_ms(getattr(ev, "Timestamp", 0))
+            moved = await self.store.set_status(ids, status, ts)
+            if moved:
+                # One event per real transition, not per receipt: WhatsApp
+                # resends receipts, and an agent setting a reminder on "read"
+                # must not get three.
+                await self._emit(f"message.{status}", {
+                    "message_ids": moved,
+                    "chat_jid": await self._resolver.canonical(
+                        J.from_obj(getattr(getattr(ev, "MessageSource", None),
+                                           "Chat", None))),
+                    "status": status, "ts": ts,
+                })
+            return
+
         if kind != "RETRY":
             return
-        for mid in list(getattr(ev, "MessageIDs", None) or []):
+        for mid in ids:
             if mid in self._retried:
                 continue
             self._mark_retried(mid)

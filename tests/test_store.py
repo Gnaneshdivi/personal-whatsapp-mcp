@@ -307,3 +307,86 @@ async def test_unread_filter(store):
     await store.touch_chat("unread@s.whatsapp.net", now_ms(), False, "theirs")
     got = await store.list_chats(kind="unread")
     assert [c.chat_jid for c in got] == ["unread@s.whatsapp.net"]
+
+
+# ------------------------------------------------------- delivery status
+
+async def test_status_advances_but_never_goes_backwards(store):
+    """Receipts arrive out of order and WhatsApp resends them. A DELIVERED
+    landing after a READ must not un-read the message."""
+    await store.upsert_message(Message("s1", "1@s.whatsapp.net", now_ms(),
+                                       is_from_me=True, text="hi"))
+    assert await store.set_status(["s1"], "delivered", now_ms()) == ["s1"]
+    assert (await store.get_message("s1")).status == "delivered"
+
+    assert await store.set_status(["s1"], "read", now_ms()) == ["s1"]
+    assert (await store.get_message("s1")).status == "read"
+
+    # late DELIVERED — ignored, and reported as no change
+    assert await store.set_status(["s1"], "delivered", now_ms()) == []
+    assert (await store.get_message("s1")).status == "read"
+
+
+async def test_only_changed_ids_are_returned(store):
+    """Callers emit one event per real transition; a resent receipt must not
+    produce a second 'they read it' for an agent to act on twice."""
+    for i in range(3):
+        await store.upsert_message(Message(f"m{i}", "1@s.whatsapp.net", now_ms(),
+                                           is_from_me=True, text="x"))
+    assert set(await store.set_status(["m0", "m1", "m2"], "read", now_ms())) == {"m0","m1","m2"}
+    assert await store.set_status(["m0", "m1", "m2"], "read", now_ms()) == []
+
+
+async def test_incoming_messages_have_no_status(store):
+    """Status is about our own messages; theirs would be meaningless."""
+    await store.upsert_message(Message("t1", "1@s.whatsapp.net", now_ms(), text="yo"))
+    assert await store.set_status(["t1"], "read", now_ms()) == []
+    assert (await store.get_message("t1")).public()["status"] is None
+
+
+async def test_a_sent_message_starts_at_sent(store):
+    await store.upsert_message(Message("s2", "1@s.whatsapp.net", now_ms(),
+                                       is_from_me=True, text="hi"))
+    m = await store.get_message("s2")
+    assert m.status == "sent" and m.public()["status"] == "sent"
+
+
+async def test_a_new_column_migrates_instead_of_needing_a_wipe(tmp_path):
+    """The alternative was taken once and cost 6,225 messages: the database was
+    deleted to pick up a new column, and history sync only runs at pair time so
+    it could not be recovered. Additive migration is the difference between an
+    upgrade and permanent data loss."""
+    import aiosqlite
+    from wa_mcp.store.sqlite import SQLiteStore
+
+    path = tmp_path / "old.db"
+    # A database from before `status` existed.
+    async with aiosqlite.connect(path) as db:
+        await db.executescript("""
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY, message_id TEXT NOT NULL UNIQUE,
+                chat_jid TEXT NOT NULL, sender_jid TEXT, sender_name TEXT,
+                is_from_me INTEGER NOT NULL DEFAULT 0, ts INTEGER NOT NULL,
+                type TEXT NOT NULL DEFAULT 'text', text TEXT, media_ref TEXT,
+                quoted_id TEXT, edited_at INTEGER, revoked_at INTEGER,
+                raw_proto BLOB);
+            CREATE TABLE chats (
+                chat_jid TEXT PRIMARY KEY, name TEXT,
+                is_group INTEGER NOT NULL DEFAULT 0, last_message_ts INTEGER,
+                last_message_text TEXT, unread_count INTEGER NOT NULL DEFAULT 0,
+                archived INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            INSERT INTO messages (message_id, chat_jid, ts, text, is_from_me)
+              VALUES ('old1', '1@s.whatsapp.net', 1000, 'precious', 1);
+        """)
+        await db.commit()
+
+    store = SQLiteStore(path)
+    await store.connect()
+    try:
+        kept = await store.get_message("old1")
+        assert kept is not None and kept.text == "precious", "the row was lost"
+        assert kept.status == "sent"
+        assert await store.set_status(["old1"], "read", now_ms()) == ["old1"]
+    finally:
+        await store.close()
