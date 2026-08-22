@@ -437,8 +437,10 @@ def build(rt, q: str, status: dict) -> str:
     n = t.notify
     notify = section("Tell me when", (
         row("Send alerts to", text_in("notify.jid", n.jid, "919812345678"),
-            "A number to send alerts to — the owner's personal phone, say. "
-            "Leave blank to alert inside the chat the message came from.")
+            "The number that should hear about these — the owner's personal "
+            "phone, say, when the line customers write to is not the line the "
+            "owner reads.\n\nLeave it blank and no alerts are sent at all.",
+            hint="Blank switches alerts off.")
         + row("Alert me when a message contains",
               csv_in("notify.on_keywords", n.on_keywords, "urgent, complaint, cancel"),
               "Comma separated, matched case-insensitively.", wide=True)

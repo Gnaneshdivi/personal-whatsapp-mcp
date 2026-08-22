@@ -291,14 +291,17 @@ class TriggerEngine:
         return self._record(Decision(False, reason, notified=notified))
 
     async def _notify(self, msg: Inbound, reason: str) -> str | None:
-        """Tell a human. Defaults to the same chat when no number is configured.
+        """Tell a human, if a number has been given to tell.
 
-        The business case for a separate number: the line customers write to is
-        not the line the owner reads. With `jid` unset the alert lands in the
-        conversation itself, which is right for a personal number.
+        No number means no alert. This used to fall back to the chat the
+        message came from, which sent "Needs you: … Their message: … Reason: …"
+        to the person that alert is *about* — internal wording delivered to a
+        customer, and unreadable to the owner if they are not in that chat
+        anyway. Clearing the field also looked like it disabled alerts and
+        instead quietly redirected them at whoever had just written in.
         """
         n = self.settings.notify
-        target = J.to_jid(n.jid) if n.jid else J.normalise(msg.chat_jid)
+        target = J.to_jid(n.jid) if n.jid else ""
         if not target:
             return None
         try:

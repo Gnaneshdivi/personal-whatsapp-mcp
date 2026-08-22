@@ -183,7 +183,7 @@ async def test_allowed_topics_are_also_told_to_the_model(rt):
 
 async def test_handoff_marker_is_stripped_before_the_customer_sees_it(rt):
     eng = TriggerEngine(rt)
-    eng.settings = settings(notify={"on_handoff": True})
+    eng.settings = settings(notify={"on_handoff": True, "jid": "919999999999"})
     eng._http = model(reply="I'll get someone. [[NOTIFY]]")
     d = await eng.consider(inbound())
     customer_msg = rt.wa.sent[0][1]
@@ -204,12 +204,22 @@ async def test_notification_goes_to_the_configured_number(rt):
     assert "911@s.whatsapp.net" in targets      # the customer still got a reply
 
 
-async def test_with_no_number_configured_the_alert_stays_in_the_chat(rt):
+async def test_with_no_number_configured_nothing_is_alerted(rt):
+    """Blank means off, not "send it to whoever wrote in".
+
+    The alert reads "Needs you: … Their message: … Reason: …". Falling back to
+    the incoming chat delivered that to the person it is about — internal
+    wording sent to a customer — and made clearing the field look like it
+    disabled alerts while it silently redirected them.
+    """
     eng = TriggerEngine(rt)
-    eng.settings = settings(notify={"on_handoff": True})
+    eng.settings = settings(notify={"on_handoff": True})     # no jid
     eng._http = model(reply="hold on [[NOTIFY]]")
     d = await eng.consider(inbound())
-    assert d.notified == "911@s.whatsapp.net"
+    assert d.notified is None
+    # The reply still goes out; only the alert is withheld.
+    assert [to for to, _ in rt.wa.sent] == ["911@s.whatsapp.net"]
+    assert "Needs you" not in rt.wa.sent[0][1]
 
 
 async def test_notify_on_backend_error(rt):
