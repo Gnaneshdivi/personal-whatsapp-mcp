@@ -174,6 +174,7 @@ const K  = qs.get("k") ? "?k=" + encodeURIComponent(qs.get("k")) : "";
 const KA = (u) => u + (K ? (u.includes("?") ? "&" + K.slice(1) : K) : "");
 
 let chats = [], current = null, oldest = null, hasMore = false, loading = false;
+let currentIsGroup = false;
 let filter = "all", query = "";
 
 const $ = (s) => document.querySelector(s);
@@ -190,12 +191,15 @@ function when(iso) {
 }
 const dayKey = (iso) => new Date(iso).toDateString();
 
-const TICK_ONE = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none"
-  stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
-  stroke-linejoin="round"><path d="M2 12.5 7 17l4-4"/></svg>`;
-const TICK_TWO = `<svg viewBox="0 0 24 24" width="17" height="15" fill="none"
-  stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
-  stroke-linejoin="round"><path d="M1 12.5 5.5 17 14 8"/><path d="M8 12.5 12.5 17 21 8"/></svg>`;
+// viewBox matches the rendered aspect ratio, or the glyph is squashed. The
+// earlier version put a checkmark in the corner of a square box and drew it
+// non-uniformly, which came out looking like a small chevron.
+const TICK_ONE = `<svg viewBox="0 0 16 12" width="14" height="10.5" fill="none"
+  stroke="currentColor" stroke-width="1.9" stroke-linecap="round"
+  stroke-linejoin="round"><path d="M2 6.5 5.5 10 14 2"/></svg>`;
+const TICK_TWO = `<svg viewBox="0 0 22 12" width="17" height="10.5" fill="none"
+  stroke="currentColor" stroke-width="1.9" stroke-linecap="round"
+  stroke-linejoin="round"><path d="M1 6.5 4.5 10 13 2"/><path d="M8 6.5 11.5 10 20 2"/></svg>`;
 
 // sent = one tick, delivered = two, read/played = two in blue. The colour is
 // the signal an agent acts on, so it is worth getting exactly right.
@@ -264,6 +268,7 @@ async function openChat(jid) {
   renderChats();
   const d = await (await fetch(KA(`/api/messages/${encodeURIComponent(jid)}?limit=40`))).json();
   hasMore = d.has_more;
+  currentIsGroup = !!d.chat.is_group;
   $("#pname").textContent = d.chat.name;
   $("#pav").innerHTML = `${esc((d.chat.name||"?")[0].toUpperCase())}
     <img src="${KA("/avatar/" + encodeURIComponent(jid))}" alt="" onerror="this.remove()">`;
@@ -286,7 +291,7 @@ function bubble(m, prev) {
   const day = newDay
     ? `<div class="day">${new Date(m.timestamp).toLocaleDateString([],
         {day:"numeric", month:"short", year:"numeric"})}</div>` : "";
-  const who = (!m.from_me && m.sender_name && !sameSpeaker)
+  const who = (currentIsGroup && !m.from_me && m.sender_name && !sameSpeaker)
     ? `<div class="s">${esc(m.sender_name)}</div>` : "";
   const img = (m.has_media && ["image","sticker"].includes(m.type))
     ? `<img src="${KA("/media/" + encodeURIComponent(m.message_id))}" alt="" loading="lazy"
@@ -344,12 +349,7 @@ es.addEventListener("status", e => {
   $("#num").textContent = s.number || "";
   $("#pn").textContent = s.push_name || "WhatsApp";
   const me = $("#nav-profile");
-  if (me && !me.dataset.set && s.number) {
-    me.dataset.set = "1";
-    me.innerHTML = esc((s.push_name || "?")[0].toUpperCase()) +
-      `<img src="${KA("/avatar/" + encodeURIComponent(s.number + "@s.whatsapp.net"))}"
-            onerror="this.remove()">`;
-  }
+  if (me && !me.dataset.set && s.number) { me.dataset.set = "1"; paintMe(); }
   $("#live").className = "dot" + (s.ready ? "" : " warn");
   const sy = $("#sync");
   if (s.ready) { sy.style.display = "none"; }
@@ -472,7 +472,17 @@ $("#nav-chats").onclick = showChats;
 $("#nav-profile").onclick = showProfile;
 $("#nav-settings").onclick = () => location.href = KA("/settings");
 
+async function paintMe() {
+  const s = await (await fetch(KA("/api/status"))).json();
+  const me = $("#nav-profile");
+  if (!me || !s.number) return;
+  me.innerHTML = esc((s.push_name || "?")[0].toUpperCase()) +
+    `<img src="${KA("/avatar/" + encodeURIComponent(s.number + "@s.whatsapp.net"))}"
+          onerror="this.remove()">`;
+}
+
 loadChats();
+paintMe();                       // do not wait for the next status tick
 setInterval(loadChats, 20000);   // catches read state changed on the phone
 """
 
