@@ -122,84 +122,11 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         if not st["number"] and st["phase"] in ("unpaired", "logged_out"):
             return Response(status_code=307,
                             headers={"location": f"/connect{_q(request)}"})
-
-        chats = await rt.store.list_chats(limit=100)
-        rows = []
-        for c in chats:
-            name = rt.contacts.display_name(c.chat_jid, chat_name=c.name)
-            initial = _esc(name[:1].upper() or "?")
-            badge = f'<span class="badge">{c.unread_count}</span>' if c.unread_count else ""
-            if getattr(c, "pinned", False):
-                badge = '<span class="pin">&#128204;</span>' + badge
-            rows.append(
-                f'<div class="row" onclick="location=\'/c/{_esc(c.chat_jid)}{_q(request)}\'">'
-                f'<div class="av">{initial}</div><div class="meta">'
-                f'<div class="nm">{_esc(name)}</div>'
-                f'<div class="pv">{_esc(c.last_message_text or "")}</div></div>{badge}</div>'
-            )
-        listing = "".join(rows) or '<div class="empty">No chats yet.<br>They appear as they sync.</div>'
-        return HTMLResponse(_page("WhatsApp", f"""
-<div class="wrap"><div class="list">
-  <div class="hd"><span class="dot{'' if st['ready'] else ' warn'}"></span>
-    <b>{_esc(st['push_name'] or 'WhatsApp')}</b>
-    <span style="margin-left:auto;color:#8696a0;font-size:13px">{_esc(st['number'] or '')}</span>
-    <a href="/settings{_q(request)}" title="Settings" style="font-size:17px">&#9881;</a>
-  </div>
-  <div class="sync" id="sync"></div>
-  {listing}
-</div><div class="pane"><div class="empty">Select a chat</div></div></div>
-<script>
- const es = new EventSource("/events{_q(request)}");
- const box = document.getElementById("sync");
- function render(s) {{
-   if (!s) return;
-   if (s.ready) {{ box.style.display = "none"; return; }}
-   box.style.display = "block";
-   box.innerHTML = "Syncing " + (s.detail||"") +
-     '<div class="bar"><i style="width:' + (s.percent||0) + '%"></i></div>';
- }}
- es.addEventListener("status", e => render(JSON.parse(e.data).sync));
- // Reload once sync finishes so the chat list is not left half-populated.
- let wasReady = {str(bool(st['ready'])).lower()};
- es.addEventListener("status", e => {{
-   const r = JSON.parse(e.data).ready;
-   if (r && !wasReady) location.reload();
-   wasReady = r;
- }});
- fetch("/api/status{_q(request)}").then(r=>r.json()).then(d=>render(d.sync));
-</script>"""))
-
-    async def chat(request):
-        jid = request.path_params["jid"]
-        msgs = list(reversed(await rt.store.get_messages(jid, limit=60)))
-        c = await rt.store.get_chat(jid)
-        name = rt.contacts.display_name(jid, chat_name=c.name if c else None)
-        out = []
-        for m in msgs:
-            who = ""
-            if not m.is_from_me and c and c.is_group:
-                who = (f'<div class="s">'
-                       f'{_esc(rt.contacts.display_name(m.sender_jid or "", push_name=m.sender_name))}'
-                       f"</div>")
-            if m.type in ("image", "sticker") and m.media_meta:
-                cap = f"<div>{_esc(m.text)}</div>" if m.text else ""
-                body = (f'<img src="/media/{_esc(m.message_id)}{_q(request)}" '
-                        f'style="max-width:100%;border-radius:6px;display:block" '
-                        f'loading="lazy" alt="">{cap}')
-            elif m.text:
-                body = _esc(m.text)
-            else:
-                body = f'<i style="opacity:.6">[{_esc(m.type)}]</i>'
-            when = (m.public()["timestamp"] or "")[11:16]
-            out.append(f'<div class="m{" me" if m.is_from_me else ""}">{who}{body}'
-                       f'<div class="t">{when}</div></div>')
-        return HTMLResponse(_page(name, f"""
-<div class="wrap open"><div class="list"></div><div class="pane">
-  <div class="hd"><a href="/{_q(request)}" style="font-size:20px">&larr;</a>
-    <b>{_esc(name)}</b></div>
-  <div class="msgs" id="m">{"".join(out) or '<div class="empty">No messages</div>'}</div>
-</div></div>
-<script>const m=document.getElementById("m");m.scrollTop=m.scrollHeight;</script>"""))
+        from .ui import CSS as APP_CSS, shell
+        return HTMLResponse(
+            f'<!doctype html><meta charset="utf-8"><title>WhatsApp</title>'
+            f'<meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<style>{APP_CSS}</style>{shell(_q(request))}')
 
     async def connect(request):
         st = rt.status()
@@ -281,6 +208,64 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
    if (!document.querySelector("details[open]") && !s.number) location.reload();
  }}, 4000);
 </script>"""))
+
+    async def chats_api(request):
+        q = request.query_params
+        chats = await rt.store.list_chats(
+            limit=int(q.get("limit", 60)), archived=q.get("archived") == "1",
+            query=q.get("q") or None)
+        out = []
+        for c in chats:
+            if q.get("filter") == "unread" and not c.unread_count:
+                continue
+            if q.get("filter") == "groups" and not c.is_group:
+                continue
+            d = c.public()
+            d["name"] = rt.contacts.display_name(c.chat_jid, chat_name=c.name)
+            out.append(d)
+        return JSONResponse({"chats": out})
+
+    async def messages_api(request):
+        """A page of history, oldest-first for direct rendering.
+
+        before_id pages BACKWARDS from a known message rather than by offset:
+        rows arrive continuously, and an offset would silently skip or repeat
+        messages as new ones land above the window.
+        """
+        jid = request.path_params["jid"]
+        q = request.query_params
+        msgs = await rt.store.get_messages(
+            jid, limit=int(q.get("limit", 40)), before_id=q.get("before") or None)
+        chat = await rt.store.get_chat(jid)
+        out = []
+        for m in reversed(msgs):                 # store returns newest-first
+            d = m.public()
+            d["sender_name"] = (rt.contacts.display_name(
+                m.sender_jid or "", push_name=m.sender_name)
+                if m.sender_jid and not m.is_from_me else None)
+            out.append(d)
+        return JSONResponse({
+            "messages": out,
+            "has_more": len(msgs) == int(q.get("limit", 40)),
+            "chat": {"jid": jid, "is_group": bool(chat and chat.is_group),
+                     "name": rt.contacts.display_name(
+                         jid, chat_name=chat.name if chat else None)},
+        })
+
+    async def send_api(request):
+        body = await request.json()
+        try:
+            res = await rt.wa.send_text(body["to"], body["text"])
+            return JSONResponse({"ok": True, **res})
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+    async def read_api(request):
+        try:
+            await rt.wa.mark_read(request.path_params["jid"], [])
+        except Exception:
+            await rt.store.set_unread(request.path_params["jid"], 0)
+        return JSONResponse({"ok": True})
 
     async def status_api(request):
         return JSONResponse(rt.status())
@@ -630,8 +615,11 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
 
     for route in [
         Route("/", index),
-        Route("/c/{jid}", chat),
         Route("/connect", connect),
+        Route("/api/chats", chats_api),
+        Route("/api/messages/{jid}", messages_api),
+        Route("/api/send", send_api, methods=["POST"]),
+        Route("/api/read/{jid}", read_api, methods=["POST"]),
         Route("/api/status", status_api),
         Route("/api/flow/{flow}", flow_api),
         Route("/settings", settings_page),
