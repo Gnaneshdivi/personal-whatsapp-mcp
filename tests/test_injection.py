@@ -6,6 +6,8 @@ and "instructions to follow".
 """
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
@@ -184,3 +186,35 @@ def test_the_guard_names_the_impersonation_case():
     text = INJECTION_GUARD.format(nonce="x")
     for phrase in ("operator", "admin", "developer", "system"):
         assert phrase in text
+
+
+async def test_the_message_being_answered_is_always_in_the_prompt():
+    """A substring test used to drop it.
+
+    The guard against duplicating the last turn asked whether the incoming text
+    appeared anywhere in it. "Hi" appears inside "Hi there", so a short message
+    arriving after a longer one containing it was silently never added, and the
+    model answered the previous turn instead.
+    """
+    import httpx
+
+    from wa_mcp.trigger.backends import Context, reply_via_model
+    from wa_mcp.trigger.settings import ModelBackend
+
+    seen = {}
+
+    async def handler(request):
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    ctx = Context(message="Hi", chat_name="C", chat_jid="1@s.whatsapp.net",
+                  sender_name="S", sender_jid="1@s.whatsapp.net", me_name="me",
+                  message_id="m2", timestamp="0",
+                  history=[(False, "S", "Hi there")])
+    cfg = ModelBackend(base_url="https://x.test/v1", api_key="k", model="m")
+    await reply_via_model(cfg, ctx,
+                          httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+
+    users = [m["content"] for m in seen["body"]["messages"] if m["role"] == "user"]
+    assert len(users) == 2, f"the incoming message was dropped: {users}"
+    assert users[-1].endswith("Hi</msg>")

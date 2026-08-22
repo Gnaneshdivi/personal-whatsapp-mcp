@@ -172,9 +172,14 @@ async def reply_via_model(cfg: ModelBackend, ctx: Context,
         else:
             messages.append({"role": "user", "content": wrap_untrusted(text, nonce)})
 
+    # Exact match, not a substring test. `ctx.message not in last["content"]`
+    # meant an incoming "Hi" was considered already present when the previous
+    # turn was "Hi there" — so the message actually being answered was never
+    # added, and the model replied to the one before it.
+    wrapped = wrap_untrusted(ctx.message, nonce)
     last = messages[-1] if messages else None
-    if not last or last["role"] != "user" or ctx.message not in last["content"]:
-        messages.append({"role": "user", "content": wrap_untrusted(ctx.message, nonce)})
+    if not last or last["role"] != "user" or last["content"] != wrapped:
+        messages.append({"role": "user", "content": wrapped})
 
     headers = {"Content-Type": "application/json"}
     if cfg.api_key:
