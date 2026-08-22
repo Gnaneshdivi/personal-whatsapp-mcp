@@ -21,7 +21,7 @@ from typing import Any
 
 import aiosqlite
 
-from .base import Chat, Message, Store, now_ms
+from .base import Chat, Message, Store, now_ms, split_query
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -260,6 +260,13 @@ class SQLiteStore(Store):
         what Postgres' websearch_to_tsquery accepts that a model writing one
         query for both backends generally gets what it meant.
         """
+        include, exclude = split_query(query)
+        if not include:
+            # FTS5 has no way to say "everything except X"; without a positive
+            # term there is nothing to rank against.
+            return []
+        query = " ".join(include) + ("".join(f" NOT {e}" for e in exclude))
+
         sql = (f"SELECT m.message_id, m.chat_jid, m.sender_jid, m.sender_name, "
                "m.is_from_me, m.ts, m.type, m.text, m.media_ref, m.media_meta, "
                "m.quoted_id, m.edited_at, m.revoked_at "

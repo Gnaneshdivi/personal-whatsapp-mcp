@@ -13,7 +13,7 @@ import logging
 
 import segno
 
-from .config import Settings
+from .config import Settings, data_dir
 from .runtime import Runtime
 
 log = logging.getLogger(__name__)
@@ -157,7 +157,15 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
                 who = (f'<div class="s">'
                        f'{_esc(rt.contacts.display_name(m.sender_jid or "", push_name=m.sender_name))}'
                        f"</div>")
-            body = _esc(m.text) if m.text else f'<i style="opacity:.6">[{_esc(m.type)}]</i>'
+            if m.type in ("image", "sticker") and m.media_meta:
+                cap = f"<div>{_esc(m.text)}</div>" if m.text else ""
+                body = (f'<img src="/media/{_esc(m.message_id)}{_q(request)}" '
+                        f'style="max-width:100%;border-radius:6px;display:block" '
+                        f'loading="lazy" alt="">{cap}')
+            elif m.text:
+                body = _esc(m.text)
+            else:
+                body = f'<i style="opacity:.6">[{_esc(m.type)}]</i>'
             when = (m.public()["timestamp"] or "")[11:16]
             out.append(f'<div class="m{" me" if m.is_from_me else ""}">{who}{body}'
                        f'<div class="t">{when}</div></div>')
@@ -445,6 +453,31 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         except Exception as exc:
             return JSONResponse({"ok": False, "error": str(exc)})
 
+    async def media(request):
+        """Serve an attachment, fetching and caching it on first request."""
+        mid = request.path_params["mid"]
+        row = await rt.store.get_message(mid)
+        if row is None or not row.media_meta:
+            return PlainTextResponse("no media", status_code=404)
+
+        cache = data_dir() / "media"
+        cache.mkdir(parents=True, exist_ok=True)
+        kind = (row.media_meta or {}).get("mime_type", "application/octet-stream")
+        path = cache / mid.replace("/", "_")
+
+        if not path.exists():
+            try:
+                blob = await rt.wa.download_media(mid)
+            except Exception as exc:
+                return PlainTextResponse(f"download failed: {exc}", status_code=502)
+            if not blob:
+                return PlainTextResponse("no media", status_code=404)
+            path.write_bytes(blob)
+            await rt.store.set_media_ref(mid, str(path))
+
+        return Response(path.read_bytes(), media_type=kind,
+                        headers={"Cache-Control": "private, max-age=86400"})
+
     async def qr_txt(request):
         qr = rt.wa.qr if rt.wa else None
         if not qr:
@@ -479,6 +512,7 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         Route("/api/settings", settings_api, methods=["POST"]),
         Route("/api/test-reply", test_reply_api, methods=["POST"]),
         Route("/qr.txt", qr_txt),
+        Route("/media/{mid}", media),
         Route("/events", events),
     ]:
         app.router.routes.append(route)

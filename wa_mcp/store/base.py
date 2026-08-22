@@ -153,3 +153,46 @@ class Store(Protocol):
     # ---- key/value: settings, sync state, trigger config ----
     async def get_kv(self, key: str) -> dict[str, Any] | None: ...
     async def put_kv(self, key: str, value: dict[str, Any]) -> None: ...
+
+
+# --------------------------------------------------------------- search syntax
+
+_QUOTED = __import__("re").compile(r'"([^"]*)"')
+
+
+def split_query(query: str) -> tuple[list[str], list[str]]:
+    """Split a search string into (include, exclude) parts.
+
+    Every backend spells exclusion differently — FTS5 wants `NOT x`, Postgres'
+    websearch_to_tsquery and Mongo's $text want `-x` — so a query written for
+    one silently means something else on another. Rather than push that onto
+    callers, both spellings are accepted here and each adapter renders its own
+    dialect from the result.
+
+    Quoted phrases survive intact, since all three support them.
+    """
+    query = (query or "").strip()
+    include: list[str] = []
+    exclude: list[str] = []
+
+    def take(chunk: str, negated: bool) -> None:
+        chunk = chunk.strip()
+        if chunk:
+            (exclude if negated else include).append(chunk)
+
+    # Pull phrases out first so their internal spaces and hyphens survive.
+    rest = _QUOTED.sub(lambda m: f"\x00{m.group(1)}\x00", query)
+    tokens, negate_next = rest.split(), False
+    for tok in tokens:
+        if tok.upper() == "NOT":
+            negate_next = True
+            continue
+        negated = negate_next or tok.startswith("-")
+        negate_next = False
+        if tok.startswith("-"):
+            tok = tok[1:]
+        if "\x00" in tok:
+            take(f'"{tok.strip(chr(0))}"', negated)
+        else:
+            take(tok, negated)
+    return include, exclude

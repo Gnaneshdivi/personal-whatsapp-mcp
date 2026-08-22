@@ -1,21 +1,69 @@
-"""Storage contract tests.
+"""Storage contract tests — run against every backend.
 
-Written against the PORT, not against SQLite, so the Postgres and Mongo adapters
-can be dropped into the same suite by changing one fixture.
+Written against the PORT, so the same assertions hold for SQLite, Postgres and
+Mongo. That is the whole value of the abstraction: a difference in behaviour
+between backends shows up here rather than in production.
+
+Postgres and Mongo are skipped unless a server is reachable:
+
+    WA_TEST_POSTGRES=postgresql://t:t@localhost:55433/t
+    WA_TEST_MONGO=mongodb://localhost:57017/wa_test
 """
 from __future__ import annotations
+
+import os
+import uuid
 
 import pytest
 
 from wa_mcp.store.base import Message, now_ms
 from wa_mcp.store.sqlite import SQLiteStore
 
+PG = os.getenv("WA_TEST_POSTGRES", "")
+MONGO = os.getenv("WA_TEST_MONGO", "")
 
-@pytest.fixture
-async def store(tmp_path):
-    s = SQLiteStore(tmp_path / "app.db")
+
+@pytest.fixture(params=["sqlite", "postgres", "mongo"])
+async def store(request, tmp_path):
+    kind = request.param
+
+    if kind == "sqlite":
+        s = SQLiteStore(tmp_path / "app.db")
+        await s.connect()
+        yield s
+        await s.close()
+        return
+
+    if kind == "postgres":
+        if not PG:
+            pytest.skip("WA_TEST_POSTGRES not set")
+        from wa_mcp.store.postgres import PostgresStore
+
+        # A schema per test, so cases cannot see each other's rows and nothing
+        # has to be torn down in the right order.
+        schema = "t" + uuid.uuid4().hex[:12]
+        s = PostgresStore(PG)
+        await s.connect()
+        async with s.pool.acquire() as c:
+            await c.execute(f'CREATE SCHEMA "{schema}"')
+            await c.execute(f'SET search_path TO "{schema}"')
+        await s.close()
+        s = PostgresStore(PG + f"?options=-csearch_path%3D{schema}")
+        await s.connect()
+        yield s
+        async with s.pool.acquire() as c:
+            await c.execute(f'DROP SCHEMA "{schema}" CASCADE')
+        await s.close()
+        return
+
+    if not MONGO:
+        pytest.skip("WA_TEST_MONGO not set")
+    from wa_mcp.store.mongo import MongoStore
+
+    s = MongoStore(MONGO.rstrip("/") + "_" + uuid.uuid4().hex[:12])
     await s.connect()
     yield s
+    await s._client.drop_database(s.db_name)
     await s.close()
 
 
@@ -99,9 +147,21 @@ async def test_search_finds_phrases_and_negation(store):
     await store.upsert_message(msg("m3", text="invoice sent yesterday"))
 
     assert {m.message_id for m in await store.search("cafe")} == {"m1", "m2"}
-    assert [m.message_id for m in await store.search('"meet at"')] == ["m1"]
+    # A phrase with no stop words behaves the same everywhere. `"meet at"` does
+    # NOT: Postgres drops "at" as an English stop word, collapsing the phrase to
+    # one stemmed term that also matches "meeting". That is correct for search
+    # quality, so the port does not try to hide it.
+    assert [m.message_id for m in await store.search('"cafe tomorrow"')] == ["m1"]
+    # Both spellings of exclusion work on every backend — FTS5 wants "NOT x",
+    # Postgres and Mongo want "-x", so the port accepts either and translates.
     assert [m.message_id for m in await store.search("cafe NOT cancelled")] == ["m1"]
-    assert {m.message_id for m in await store.search("meet*")} == {"m1", "m2"}
+    assert [m.message_id for m in await store.search("cafe -cancelled")] == ["m1"]
+
+
+async def test_stemming_is_available_on_every_backend(store):
+    """All three stem, so a search for the root finds the inflected form."""
+    await store.upsert_message(msg("s1", text="the meeting was long"))
+    assert [m.message_id for m in await store.search("meet")] == ["s1"]
 
 
 async def test_search_index_follows_edits_and_deletes(store):
@@ -179,3 +239,24 @@ async def test_raw_proto_never_leaks_into_public_output(store):
     await store.upsert_message(msg("m1", raw_proto=b"\x08\x01binary"))
     got = await store.get_message("m1")
     assert "raw_proto" not in got.public()
+
+
+# ------------------------------------------------------- media round trip
+
+async def test_media_metadata_and_ref_survive_every_backend(store):
+    """The media path depends on media_meta surviving storage — it is a dict on
+    SQL backends and a subdocument on Mongo, so it gets asserted here."""
+    await store.upsert_message(Message(
+        "med1", "1@s.whatsapp.net", now_ms(), type="image",
+        media_meta={"mime_type": "image/jpeg", "kind": "image", "length": 1234},
+        raw_proto=b"\x0a\x04test",
+    ))
+    got = await store.get_message("med1")
+    assert got.media_meta["mime_type"] == "image/jpeg"
+    assert got.public()["has_media"] is True
+    assert got.public()["media_downloaded"] is False
+
+    await store.set_media_ref("med1", "/tmp/med1.jpg")
+    got = await store.get_message("med1")
+    assert got.media_ref == "/tmp/med1.jpg"
+    assert got.public()["media_downloaded"] is True
