@@ -63,6 +63,115 @@ class WebhookBackend:
 
 
 @dataclass
+class Guardrails:
+    """What the bot is allowed to talk about.
+
+    Three layers, because they fail differently. Keywords are deterministic and
+    run before any model is called, so a hard block costs nothing and cannot be
+    talked around. Topics are injected into the system prompt, which steers well
+    but is advice rather than enforcement. `require_allowed_topic` adds a cheap
+    keyword pre-filter for the "only answer about X" case.
+
+    A model can be argued out of a prompt instruction. It cannot be argued out
+    of a keyword check that runs before it is invoked — so put anything that
+    genuinely must not happen in `blocked_keywords`.
+    """
+
+    # Only reply when the message looks related to one of these. Empty = any.
+    allowed_topics: list[str] = field(default_factory=list)
+    require_allowed_topic: bool = False
+    # Never reply about these; also injected as an instruction.
+    blocked_topics: list[str] = field(default_factory=list)
+    # Hard, pre-model, case-insensitive substring match.
+    blocked_keywords: list[str] = field(default_factory=list)
+    # Free text appended to the system prompt — tone, persona, house rules.
+    policy_note: str = ""
+
+    # Grounding. On by default: an assistant answering from a WhatsApp thread
+    # should work from what is actually in that thread. A model left to its own
+    # knowledge will confidently invent an order number, a price or an address,
+    # and on a business line that is worse than silence.
+    context_only: bool = True
+    # The deliberate escape hatch. Turning this on is stated to the model in
+    # plain words rather than implied by the absence of a restriction, so the
+    # behaviour is explicit on both sides of the boundary.
+    allow_external_knowledge: bool = False
+
+    fallback_message: str = (
+        "Sorry, I can't help with that here. Someone will get back to you."
+    )
+    send_fallback_when_blocked: bool = True
+    send_fallback_on_error: bool = False
+
+    def as_prompt(self) -> str:
+        """The policy, rendered for the model. Empty when nothing is set."""
+        parts = []
+        if self.allow_external_knowledge:
+            parts.append(
+                "You may use your general knowledge, and any search or tools "
+                "available to you, to answer beyond this conversation."
+            )
+        elif self.context_only:
+            parts.append(
+                "Answer only from this conversation and the information in it. "
+                "Do not use outside knowledge, do not search, and do not invent "
+                "details such as prices, dates, addresses or order numbers. "
+                "If the answer is not in this conversation, say that you do not "
+                "have it here."
+            )
+        if self.allowed_topics:
+            parts.append(
+                "Only help with these topics: "
+                + ", ".join(self.allowed_topics)
+                + ". If the message is about anything else, reply exactly: "
+                + self.fallback_message
+            )
+        if self.blocked_topics:
+            parts.append(
+                "Never discuss: " + ", ".join(self.blocked_topics)
+                + ". If asked, reply exactly: " + self.fallback_message
+            )
+        if self.policy_note.strip():
+            parts.append(self.policy_note.strip())
+        return "\n".join(parts)
+
+    def blocked_reason(self, text: str) -> str | None:
+        """Deterministic pre-model check. None means allowed."""
+        low = (text or "").lower()
+        for word in self.blocked_keywords:
+            w = word.strip().lower()
+            if w and w in low:
+                return f"blocked keyword {word.strip()!r}"
+        if self.require_allowed_topic and self.allowed_topics:
+            if not any(t.strip().lower() in low for t in self.allowed_topics if t.strip()):
+                return "message does not mention an allowed topic"
+        return None
+
+
+@dataclass
+class Notify:
+    """Where a human gets told something needs them.
+
+    The business case: the number answering customers is not the number the
+    owner reads. `jid` empty means notify in the same conversation, which is the
+    sensible default for a personal number.
+    """
+
+    jid: str = ""                     # empty -> the chat the message came from
+    on_handoff: bool = True           # the model asked for a human
+    on_blocked: bool = False          # a guardrail refused
+    on_error: bool = False            # the backend failed
+    # A reply containing this marker is treated as "get a human", and the marker
+    # is stripped before anything is sent to the contact.
+    handoff_marker: str = "[[NOTIFY]]"
+    template: str = (
+        "Needs you: {{chat_name}} ({{sender_jid}})\n"
+        "Their message: {{message}}\n"
+        "Reason: {{reason}}"
+    )
+
+
+@dataclass
 class ReplyScope:
     """Who gets replied to. Everything starts at none."""
 
@@ -86,6 +195,12 @@ class TriggerSettings:
     model: ModelBackend = field(default_factory=ModelBackend)
     webhook: WebhookBackend = field(default_factory=WebhookBackend)
     reply: ReplyScope = field(default_factory=ReplyScope)
+    guardrails: Guardrails = field(default_factory=Guardrails)
+    notify: Notify = field(default_factory=Notify)
+    # A reply carrying an image URL is downloaded and sent as a photo rather
+    # than as a link. Off by default: it fetches whatever URL a model emits.
+    send_images: bool = False
+    max_image_bytes: int = 8 * 1024 * 1024
     # Typing indicators cost nothing and are most of what makes an automated
     # reply read as a person rather than a bot posting instantly.
     show_typing: bool = True
@@ -110,6 +225,10 @@ class TriggerSettings:
             model=_build(ModelBackend, raw.get("model")),
             webhook=_build(WebhookBackend, raw.get("webhook")),
             reply=_build(ReplyScope, raw.get("reply")),
+            guardrails=_build(Guardrails, raw.get("guardrails")),
+            notify=_build(Notify, raw.get("notify")),
+            send_images=bool(raw.get("send_images", False)),
+            max_image_bytes=int(raw.get("max_image_bytes", 8 * 1024 * 1024)),
             show_typing=bool(raw.get("show_typing", True)),
         )
 

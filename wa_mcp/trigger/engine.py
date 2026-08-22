@@ -17,7 +17,8 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from ..whatsapp import jid as J
-from .backends import BackendError, Context, reply_via_model, reply_via_webhook
+from .backends import (BackendError, Context, extract_images, fetch_image,
+                       render, reply_via_model, reply_via_webhook)
 from .settings import TriggerSettings
 
 log = logging.getLogger(__name__)
@@ -29,10 +30,13 @@ class Decision:
     reason: str
     reply: str | None = None
     backend: str | None = None
+    images: int = 0
+    notified: str | None = None
 
     def public(self) -> dict:
         return {"fired": self.fired, "reason": self.reason,
-                "backend": self.backend,
+                "backend": self.backend, "images": self.images,
+                "notified": self.notified,
                 "reply_preview": (self.reply or "")[:120] or None}
 
 
@@ -100,6 +104,10 @@ class TriggerEngine:
         if self.rt.wa is None or not self.rt.wa.sync.state.ready:
             return "still syncing — replies are held until history finishes"
 
+        blocked = s.guardrails.blocked_reason(msg.text)
+        if blocked:
+            return f"guardrail: {blocked}"
+
         chat = J.normalise(msg.chat_jid)
         if msg.is_group:
             if s.reply.groups == "none":
@@ -131,6 +139,8 @@ class TriggerEngine:
     async def consider(self, msg: Inbound) -> Decision:
         why = self._why_not(msg)
         if why:
+            if why.startswith("guardrail:"):
+                return await self._refuse(msg, why)
             return self._record(Decision(False, why))
 
         try:
@@ -145,12 +155,31 @@ class TriggerEngine:
             else:
                 text = await reply_via_webhook(self.settings.webhook, ctx, self._http)
         except BackendError as exc:
-            return self._record(Decision(False, f"{backend} backend failed: {exc}",
-                                         backend=backend))
+            reason = f"{backend} backend failed: {exc}"
+            g = self.settings.guardrails
+            if g.send_fallback_on_error and g.fallback_message:
+                await self._say(msg, g.fallback_message)
+            if self.settings.notify.on_error:
+                await self._notify(msg, reason)
+            return self._record(Decision(False, reason, backend=backend))
 
         text = (text or "").strip()
-        if not text:
-            return self._record(Decision(False, "backend returned an empty reply", backend=backend))
+
+        # A handoff marker means the model decided a human is needed. Strip it
+        # before anything reaches the contact — they should never see the
+        # plumbing — and route the alert to whoever actually reads it.
+        marker = self.settings.notify.handoff_marker
+        handoff = bool(marker and marker in text)
+        if handoff:
+            text = text.replace(marker, "").strip()
+
+        images: list[str] = []
+        if self.settings.send_images:
+            text, images = extract_images(text)
+
+        if not text and not images:
+            return self._record(Decision(False, "backend returned an empty reply",
+                                         backend=backend))
         limit = self.settings.reply.max_reply_chars
         if len(text) > limit:
             text = text[:limit].rsplit(" ", 1)[0] + "…"
@@ -162,10 +191,15 @@ class TriggerEngine:
         self._cooldown[chat] = time.monotonic()
         self._recent_hour.append(time.monotonic())
 
+        sent_images = 0
         try:
             if self.settings.show_typing:
                 await self.rt.wa.set_typing(chat, True)
-            sent = await self.rt.wa.send_text(chat, text)
+            if text:
+                sent = await self.rt.wa.send_text(chat, text)
+                if sent.get("message_id"):
+                    self.note_generated(sent["message_id"])
+            sent_images = await self._send_images(chat, images)
         except Exception as exc:
             return self._record(Decision(False, f"send failed: {exc}", text, backend))
         finally:
@@ -175,9 +209,84 @@ class TriggerEngine:
                 except Exception:
                     pass
 
-        if sent.get("message_id"):
-            self.note_generated(sent["message_id"])
-        return self._record(Decision(True, "sent", text, backend))
+        notified = None
+        if handoff and self.settings.notify.on_handoff:
+            notified = await self._notify(msg, "the assistant asked for a human")
+
+        return self._record(Decision(True, "sent", text, backend,
+                                     images=sent_images, notified=notified))
+
+    # ------------------------------------------------------------ outputs
+
+    async def _send_images(self, chat: str, urls: list[str]) -> int:
+        """Fetch each image and send it as a photo.
+
+        One failure does not sink the rest, and never the text that already
+        went out — a broken image URL should cost an attachment, not the reply.
+        """
+        import base64
+
+        n = 0
+        for url in urls[:4]:
+            try:
+                data, _ctype = await fetch_image(
+                    url, self.settings.max_image_bytes, self._http)
+                sent = await self.rt.wa.send_media(
+                    chat, base64.b64encode(data).decode(), "image")
+                if sent.get("message_id"):
+                    self.note_generated(sent["message_id"])
+                n += 1
+            except Exception as exc:
+                log.warning("image %s not sent: %s", url, exc)
+        return n
+
+    async def _say(self, msg: Inbound, text: str) -> None:
+        try:
+            sent = await self.rt.wa.send_text(J.normalise(msg.chat_jid), text)
+            if sent.get("message_id"):
+                self.note_generated(sent["message_id"])
+        except Exception as exc:
+            log.warning("fallback message not sent: %s", exc)
+
+    async def _refuse(self, msg: Inbound, reason: str) -> Decision:
+        """A guardrail said no. Optionally tell them, optionally tell a human."""
+        g = self.settings.guardrails
+        chat = J.normalise(msg.chat_jid)
+        # Refusals honour the cooldown too. Without it, someone repeating a
+        # blocked word gets the same canned line over and over.
+        now = time.monotonic()
+        last = self._cooldown.get(chat)
+        if last is None or now - last >= g_cooldown(self.settings):
+            if g.send_fallback_when_blocked and g.fallback_message:
+                self._cooldown[chat] = now
+                await self._say(msg, g.fallback_message)
+        notified = None
+        if self.settings.notify.on_blocked:
+            notified = await self._notify(msg, reason)
+        return self._record(Decision(False, reason, notified=notified))
+
+    async def _notify(self, msg: Inbound, reason: str) -> str | None:
+        """Tell a human. Defaults to the same chat when no number is configured.
+
+        The business case for a separate number: the line customers write to is
+        not the line the owner reads. With `jid` unset the alert lands in the
+        conversation itself, which is right for a personal number.
+        """
+        n = self.settings.notify
+        target = J.to_jid(n.jid) if n.jid else J.normalise(msg.chat_jid)
+        if not target:
+            return None
+        try:
+            ctx = await self._context(msg)
+            ctx.reason = reason
+            body = render(n.template, ctx)
+            sent = await self.rt.wa.send_text(target, body)
+            if sent.get("message_id"):
+                self.note_generated(sent["message_id"])
+            return target
+        except Exception as exc:
+            log.warning("notification to %s failed: %s", target, exc)
+            return None
 
     async def _context(self, msg: Inbound) -> Context:
         s = self.settings
@@ -197,6 +306,7 @@ class TriggerEngine:
 
         me = getattr(self.rt.wa, "push_name", "") or "me"
         return Context(
+            policy=s.guardrails.as_prompt(),
             message=msg.text,
             chat_name=book.display_name(msg.chat_jid, chat_name=chat.name if chat else None),
             chat_jid=msg.chat_jid,
@@ -216,6 +326,10 @@ class TriggerEngine:
         else:
             log.debug("auto-reply skipped: %s", d.reason)
         return d
+
+
+def g_cooldown(settings) -> int:
+    return max(0, settings.reply.cooldown_seconds)
 
 
 def _norm(values: list[str]) -> set[str]:

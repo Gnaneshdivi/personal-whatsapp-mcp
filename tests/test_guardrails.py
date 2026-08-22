@@ -1,0 +1,338 @@
+"""Guardrails, grounding, notification routing and image replies."""
+from __future__ import annotations
+
+import httpx
+import pytest
+
+from wa_mcp.store.sqlite import SQLiteStore
+from wa_mcp.trigger.backends import extract_images
+from wa_mcp.trigger.engine import Inbound, TriggerEngine
+from wa_mcp.trigger.settings import Guardrails, TriggerSettings
+from wa_mcp.whatsapp.contacts import ContactBook
+from wa_mcp.whatsapp.sync import SyncTracker
+
+
+class FakeWA:
+    def __init__(self):
+        self.sync = SyncTracker()
+        self.sync.connected(); self.sync.offline_completed(0)
+        self.push_name = "Shop"
+        self.sent: list[tuple[str, str]] = []
+        self.media: list[tuple[str, str]] = []
+
+    async def send_text(self, to, text, reply_to=None):
+        self.sent.append((to, text))
+        return {"message_id": f"g{len(self.sent)}"}
+
+    async def send_media(self, to, b64, kind="image", caption=None, filename=None):
+        self.media.append((to, kind))
+        return {"message_id": f"i{len(self.media)}"}
+
+    async def set_typing(self, chat, typing=True):
+        return {"status": "ok"}
+
+
+class FakeRT:
+    def __init__(self, store):
+        self.store = store
+        self.wa = FakeWA()
+        self.contacts = ContactBook("/nonexistent")
+
+
+@pytest.fixture
+async def rt(tmp_path):
+    s = SQLiteStore(tmp_path / "a.db"); await s.connect()
+    yield FakeRT(s)
+    await s.close()
+
+
+def settings(**over) -> TriggerSettings:
+    base = {
+        "enabled": True, "backend": "model",
+        "model": {"base_url": "http://m", "model": "gpt"},
+        "reply": {"personal": "all", "cooldown_seconds": 0},
+    }
+    base.update(over)
+    return TriggerSettings.from_dict(base)
+
+
+def inbound(text="hello", **kw):
+    d = dict(chat_jid="911@s.whatsapp.net", message_id="m1",
+             sender_jid="911@s.whatsapp.net", text=text,
+             is_from_me=False, is_group=False)
+    d.update(kw)
+    return Inbound(**d)
+
+
+def model(reply="ok", capture=None):
+    async def handler(request):
+        if capture is not None:
+            import json
+            capture.update(json.loads(request.read()))
+        return httpx.Response(200, json={"choices": [{"message": {"content": reply}}]})
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+# ============================================================ grounding
+
+def test_context_only_is_the_default():
+    g = Guardrails()
+    assert g.context_only is True
+    assert g.allow_external_knowledge is False
+    p = g.as_prompt()
+    assert "only from this conversation" in p
+    assert "do not invent" in p.lower()
+
+
+def test_external_knowledge_is_stated_in_words_not_implied():
+    """The flag has to be visible to the model, not just an absent restriction."""
+    p = Guardrails(allow_external_knowledge=True).as_prompt()
+    assert "general knowledge" in p
+    assert "search" in p
+    assert "only from this conversation" not in p
+
+
+async def test_the_grounding_rule_reaches_the_system_message(rt):
+    captured: dict = {}
+    eng = TriggerEngine(rt); eng.settings = settings(); eng._http = model(capture=captured)
+    await eng.consider(inbound())
+    system = captured["messages"][0]
+    assert system["role"] == "system"
+    assert "only from this conversation" in system["content"]
+
+
+async def test_turning_external_on_changes_what_the_model_is_told(rt):
+    captured: dict = {}
+    eng = TriggerEngine(rt)
+    eng.settings = settings(guardrails={"allow_external_knowledge": True})
+    eng._http = model(capture=captured)
+    await eng.consider(inbound())
+    assert "general knowledge" in captured["messages"][0]["content"]
+
+
+# ============================================================ blocklist
+
+async def test_a_blocked_keyword_never_reaches_the_model(rt):
+    """Deterministic and pre-model — it cannot be talked around."""
+    called = []
+
+    async def handler(request):
+        called.append(1)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "x"}}]})
+
+    eng = TriggerEngine(rt)
+    eng.settings = settings(guardrails={"blocked_keywords": ["refund"]})
+    eng._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    d = await eng.consider(inbound("can i get a REFUND please"))
+    assert d.fired is False and "blocked keyword" in d.reason
+    assert called == []
+
+
+async def test_a_blocked_message_still_gets_the_fallback(rt):
+    eng = TriggerEngine(rt)
+    eng.settings = settings(guardrails={"blocked_keywords": ["refund"],
+                                        "fallback_message": "A human will reply."})
+    eng._http = model()
+    await eng.consider(inbound("refund now"))
+    assert rt.wa.sent and rt.wa.sent[0][1] == "A human will reply."
+
+
+async def test_repeating_a_blocked_word_does_not_spam_the_fallback(rt):
+    eng = TriggerEngine(rt)
+    eng.settings = settings(reply={"personal": "all", "cooldown_seconds": 60},
+                            guardrails={"blocked_keywords": ["refund"]})
+    eng._http = model()
+    await eng.consider(inbound("refund", message_id="m1"))
+    await eng.consider(inbound("refund again", message_id="m2"))
+    assert len(rt.wa.sent) == 1
+
+
+async def test_fallback_can_be_switched_off(rt):
+    eng = TriggerEngine(rt)
+    eng.settings = settings(guardrails={"blocked_keywords": ["refund"],
+                                        "send_fallback_when_blocked": False})
+    eng._http = model()
+    d = await eng.consider(inbound("refund"))
+    assert d.fired is False and rt.wa.sent == []
+
+
+# ============================================================ allowlist
+
+async def test_require_allowed_topic_rejects_everything_else(rt):
+    eng = TriggerEngine(rt)
+    eng.settings = settings(guardrails={"allowed_topics": ["order", "delivery"],
+                                        "require_allowed_topic": True})
+    eng._http = model()
+    d = await eng.consider(inbound("what do you think about politics"))
+    assert d.fired is False and "allowed topic" in d.reason
+
+    d = await eng.consider(inbound("where is my order", message_id="m2"))
+    assert d.fired is True
+
+
+async def test_allowed_topics_are_also_told_to_the_model(rt):
+    captured: dict = {}
+    eng = TriggerEngine(rt)
+    eng.settings = settings(guardrails={"allowed_topics": ["billing"]})
+    eng._http = model(capture=captured)
+    await eng.consider(inbound("about billing"))
+    assert "billing" in captured["messages"][0]["content"]
+
+
+# ============================================================ notify
+
+async def test_handoff_marker_is_stripped_before_the_customer_sees_it(rt):
+    eng = TriggerEngine(rt)
+    eng.settings = settings(notify={"on_handoff": True})
+    eng._http = model(reply="I'll get someone. [[NOTIFY]]")
+    d = await eng.consider(inbound())
+    customer_msg = rt.wa.sent[0][1]
+    assert "[[NOTIFY]]" not in customer_msg
+    assert customer_msg == "I'll get someone."
+    assert d.notified is not None
+
+
+async def test_notification_goes_to_the_configured_number(rt):
+    """The business case: customers write to one line, the owner reads another."""
+    eng = TriggerEngine(rt)
+    eng.settings = settings(notify={"jid": "919999999999", "on_handoff": True})
+    eng._http = model(reply="one moment [[NOTIFY]]")
+    d = await eng.consider(inbound())
+    assert d.notified == "919999999999@s.whatsapp.net"
+    targets = [to for to, _ in rt.wa.sent]
+    assert "919999999999@s.whatsapp.net" in targets
+    assert "911@s.whatsapp.net" in targets      # the customer still got a reply
+
+
+async def test_with_no_number_configured_the_alert_stays_in_the_chat(rt):
+    eng = TriggerEngine(rt)
+    eng.settings = settings(notify={"on_handoff": True})
+    eng._http = model(reply="hold on [[NOTIFY]]")
+    d = await eng.consider(inbound())
+    assert d.notified == "911@s.whatsapp.net"
+
+
+async def test_notify_on_backend_error(rt):
+    async def handler(request):
+        return httpx.Response(500, text="down")
+
+    eng = TriggerEngine(rt)
+    eng.settings = settings(notify={"jid": "919999999999", "on_error": True})
+    eng._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    d = await eng.consider(inbound())
+    assert d.fired is False
+    assert any(to == "919999999999@s.whatsapp.net" for to, _ in rt.wa.sent)
+
+
+async def test_the_notification_carries_the_reason_and_who_it_was(rt):
+    eng = TriggerEngine(rt)
+    eng.settings = settings(notify={"jid": "919999999999", "on_handoff": True})
+    eng._http = model(reply="[[NOTIFY]] wait")
+    await eng.consider(inbound("I need to speak to a person"))
+    alert = next(t for to, t in rt.wa.sent if to.startswith("919999999999"))
+    assert "911@s.whatsapp.net" in alert
+    assert "I need to speak to a person" in alert
+    assert "human" in alert
+
+
+# ============================================================ images
+
+def test_image_extraction_handles_markdown_and_bare_urls():
+    text, urls = extract_images("here you go ![cat](https://x.io/c.png) enjoy")
+    assert urls == ["https://x.io/c.png"]
+    assert text == "here you go enjoy"
+
+    text, urls = extract_images("see https://y.io/a.jpg?v=2 ok")
+    assert urls == ["https://y.io/a.jpg?v=2"]
+
+    assert extract_images("plain text") == ("plain text", [])
+
+
+async def test_generated_image_is_downloaded_and_sent_as_a_photo(rt):
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+
+    async def handler(request):
+        if "chat/completions" in str(request.url):
+            return httpx.Response(200, json={"choices": [{"message": {
+                "content": "Here it is ![](https://img.test/a.png)"}}]})
+        return httpx.Response(200, content=png, headers={"content-type": "image/png"})
+
+    eng = TriggerEngine(rt)
+    eng.settings = settings(send_images=True)
+    eng._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    d = await eng.consider(inbound())
+    assert d.fired is True and d.images == 1
+    assert rt.wa.media == [("911@s.whatsapp.net", "image")]
+    assert "https://img.test" not in rt.wa.sent[0][1]
+
+
+async def test_images_are_left_as_links_when_the_flag_is_off(rt):
+    eng = TriggerEngine(rt)
+    eng.settings = settings(send_images=False)
+    eng._http = model(reply="look ![](https://img.test/a.png)")
+    d = await eng.consider(inbound())
+    assert d.images == 0 and rt.wa.media == []
+    assert "img.test" in rt.wa.sent[0][1]
+
+
+async def test_a_non_image_url_is_refused(rt):
+    async def handler(request):
+        if "chat/completions" in str(request.url):
+            return httpx.Response(200, json={"choices": [{"message": {
+                "content": "file ![](https://img.test/a.png)"}}]})
+        return httpx.Response(200, content=b"<html>", headers={"content-type": "text/html"})
+
+    eng = TriggerEngine(rt)
+    eng.settings = settings(send_images=True)
+    eng._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    d = await eng.consider(inbound())
+    assert d.fired is True and d.images == 0     # text still went, image did not
+    assert rt.wa.media == []
+
+
+async def test_an_oversized_image_is_refused(rt):
+    async def handler(request):
+        if "chat/completions" in str(request.url):
+            return httpx.Response(200, json={"choices": [{"message": {
+                "content": "![](https://img.test/big.png)"}}]})
+        return httpx.Response(200, content=b"0" * 5000,
+                              headers={"content-type": "image/png"})
+
+    eng = TriggerEngine(rt)
+    eng.settings = settings(send_images=True, max_image_bytes=1000)
+    eng._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    d = await eng.consider(inbound())
+    assert d.images == 0 and rt.wa.media == []
+
+
+async def test_an_image_only_reply_still_sends(rt):
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+
+    async def handler(request):
+        if "chat/completions" in str(request.url):
+            return httpx.Response(200, json={"choices": [{"message": {
+                "content": "![](https://img.test/a.png)"}}]})
+        return httpx.Response(200, content=png, headers={"content-type": "image/png"})
+
+    eng = TriggerEngine(rt)
+    eng.settings = settings(send_images=True)
+    eng._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    d = await eng.consider(inbound())
+    assert d.fired is True and d.images == 1
+    assert rt.wa.sent == []          # nothing to say, only a picture
+
+
+async def test_sent_images_are_registered_against_the_loop_guard(rt):
+    png = b"\x89PNG\r\n\x1a\n"
+
+    async def handler(request):
+        if "chat/completions" in str(request.url):
+            return httpx.Response(200, json={"choices": [{"message": {
+                "content": "![](https://img.test/a.png)"}}]})
+        return httpx.Response(200, content=png, headers={"content-type": "image/png"})
+
+    eng = TriggerEngine(rt)
+    eng.settings = settings(send_images=True)
+    eng._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await eng.consider(inbound())
+    assert "i1" in eng._generated

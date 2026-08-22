@@ -296,6 +296,58 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
    <input name="webhook.reply_path" value="{_esc(t.webhook.reply_path)}">
   </div>
 
+  <h2>Guardrails</h2>
+  <label>Answer only from this conversation</label>
+  <select name="guardrails.context_only">
+    {sel("yes" if t.guardrails.context_only else "no", "yes", "no")}</select>
+  <p style="color:#8696a0;font-size:12px">On: the model works only from the chat
+     history and says so when it does not know. Off without the flag below it
+     will invent prices, dates and order numbers.</p>
+  <label>Allow outside knowledge and search (explicit)</label>
+  <select name="guardrails.allow_external_knowledge">
+    {sel("yes" if t.guardrails.allow_external_knowledge else "no", "no", "yes")}</select>
+  <p style="color:#8696a0;font-size:12px">Stated to the model in words when on.</p>
+
+  <label>Only answer about these topics (comma separated)</label>
+  <input name="guardrails.allowed_topics"
+         value="{_esc(', '.join(t.guardrails.allowed_topics))}"
+         placeholder="orders, delivery, opening hours">
+  <label>Reject anything not mentioning one of them</label>
+  <select name="guardrails.require_allowed_topic">
+    {sel("yes" if t.guardrails.require_allowed_topic else "no", "no", "yes")}</select>
+  <label>Never discuss (comma separated)</label>
+  <input name="guardrails.blocked_topics"
+         value="{_esc(', '.join(t.guardrails.blocked_topics))}"
+         placeholder="pricing negotiation, legal advice">
+  <label>Hard-blocked words — checked before the model runs</label>
+  <input name="guardrails.blocked_keywords"
+         value="{_esc(', '.join(t.guardrails.blocked_keywords))}"
+         placeholder="refund, chargeback">
+  <label>House rules added to the prompt</label>
+  <textarea name="guardrails.policy_note"
+            placeholder="Be brief and formal. Never promise a delivery date.">{_esc(t.guardrails.policy_note)}</textarea>
+  <label>Default message when refusing</label>
+  <input name="guardrails.fallback_message" value="{_esc(t.guardrails.fallback_message)}">
+
+  <h2>Notify a human</h2>
+  <label>Send alerts to this number (blank = the same chat)</label>
+  <input name="notify.jid" value="{_esc(t.notify.jid)}"
+         placeholder="919812345678 — e.g. the owner's personal phone">
+  <div class="two">
+   <div><label>When the assistant asks for a human</label>
+     <select name="notify.on_handoff">
+       {sel("yes" if t.notify.on_handoff else "no", "yes", "no")}</select></div>
+   <div><label>When a guardrail refuses</label>
+     <select name="notify.on_blocked">
+       {sel("yes" if t.notify.on_blocked else "no", "no", "yes")}</select></div>
+  </div>
+  <label>Hand-off marker the model can emit</label>
+  <input name="notify.handoff_marker" value="{_esc(t.notify.handoff_marker)}">
+
+  <h2>Images</h2>
+  <label>Download images the model produces and send them as photos</label>
+  <select name="send_images">{sel("yes" if t.send_images else "no", "no", "yes")}</select>
+
   <h2>Who gets replies</h2>
   <label>Direct messages</label>
   <select name="reply.personal">{sel(t.reply.personal, "none", "all", "allowlist")}</select>
@@ -336,6 +388,10 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
      let v = el.multiple ? [...el.selectedOptions].map(x=>x.value) : el.value;
      if (v === 'yes') v = true; if (v === 'no') v = false;
      if (el.type === 'number') v = parseInt(v||'0', 10);
+     // Comma lists are friendlier to type than JSON arrays.
+     if (['guardrails.allowed_topics','guardrails.blocked_topics',
+          'guardrails.blocked_keywords'].includes(el.name))
+       v = String(v).split(',').map(x=>x.trim()).filter(Boolean);
      const p = el.name.split('.');
      if (p.length === 1) o[p[0]] = v; else o[p[0]][p[1]] = v;
    }}

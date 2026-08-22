@@ -33,6 +33,8 @@ class Context:
     message_id: str
     timestamp: str
     history: list[tuple[bool, str, str]]   # (from_me, speaker, text), oldest first
+    policy: str = ""                        # guardrails, rendered for the model
+    reason: str = ""                        # only used by notification templates
 
     def history_text(self) -> str:
         return "\n".join(f"{speaker}: {text}" for _fm, speaker, text in self.history)
@@ -48,6 +50,8 @@ class Context:
             "message_id": self.message_id,
             "timestamp": self.timestamp,
             "history": self.history_text(),
+            "policy": self.policy,
+            "reason": self.reason,
         }
 
 
@@ -106,6 +110,11 @@ async def reply_via_model(cfg: ModelBackend, ctx: Context,
 
     messages: list[dict[str, str]] = []
     system = render(cfg.system_prompt, ctx)
+    # The policy goes in the system message rather than the user turn: a rule
+    # placed alongside the user's words is easier to argue with than one the
+    # model reads as its own instruction.
+    if ctx.policy:
+        system = (system + "\n\n" + ctx.policy).strip()
     if system.strip():
         messages.append({"role": "system", "content": system})
     for from_me, _speaker, text in ctx.history[-cfg.history_messages:]:
@@ -196,3 +205,58 @@ async def reply_via_webhook(cfg: WebhookBackend, ctx: Context,
             if not isinstance(data, str) else "webhook returned an empty body"
         )
     return text.strip()
+
+
+# ---------------------------------------------------------------- images
+
+_IMG = re.compile(
+    r"""(?:!\[[^\]]*\]\(\s*(https?://[^\s)]+)\s*\))"""     # markdown image
+    r"""|(https?://[^\s<>"']+\.(?:png|jpe?g|gif|webp)(?:\?[^\s<>"']*)?)""",
+    re.IGNORECASE,
+)
+
+
+def extract_images(text: str) -> tuple[str, list[str]]:
+    """Pull image URLs out of a reply, and return the text without them.
+
+    Models that generate pictures hand back a markdown image or a bare URL. Sent
+    verbatim that is a link the recipient has to tap; downloaded and attached it
+    is a photo in the conversation, which is what anyone actually wanted.
+    """
+    urls: list[str] = []
+    for m in _IMG.finditer(text or ""):
+        url = m.group(1) or m.group(2)
+        if url and url not in urls:
+            urls.append(url)
+    cleaned = _IMG.sub("", text or "")
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned).strip()
+    return cleaned, urls
+
+
+async def fetch_image(url: str, max_bytes: int,
+                      client: httpx.AsyncClient | None = None) -> tuple[bytes, str]:
+    """Download an image, refusing anything too large or not an image.
+
+    The size and content-type checks are the point: this fetches a URL a model
+    produced, so it must not be trusted to be small or to be a picture.
+    """
+    own = client is None
+    client = client or httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+    try:
+        r = await client.get(url)
+        if r.status_code >= 400:
+            raise BackendError(f"image fetch returned HTTP {r.status_code}")
+        ctype = (r.headers.get("content-type") or "").split(";")[0].strip().lower()
+        if not ctype.startswith("image/"):
+            raise BackendError(f"{url} is {ctype or 'unknown'}, not an image")
+        data = r.content
+        if len(data) > max_bytes:
+            raise BackendError(f"image is {len(data)} bytes, over the {max_bytes} limit")
+        return data, ctype
+    except BackendError:
+        raise
+    except Exception as exc:
+        raise BackendError(f"image fetch failed: {exc}") from exc
+    finally:
+        if own:
+            await client.aclose()
