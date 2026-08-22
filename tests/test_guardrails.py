@@ -584,3 +584,59 @@ async def test_a_lid_sender_gets_no_link_rather_than_a_wrong_one(rt):
                   me_name="me", message_id="m", timestamp="0", history=[])
     assert ctx.chat_link() == ""
     assert "wa.me" not in ctx.tokens()["chat_link"]
+
+
+# ------------------------------------------------------ backend endpoint
+
+@pytest.mark.parametrize("base", [
+    "https://openrouter.ai/api/v1",
+    "https://openrouter.ai/api/v1/",
+    "https://openrouter.ai/api/v1/chat/completions",     # what providers document
+    "https://openrouter.ai/api/v1/chat/completions/",
+])
+async def test_the_endpoint_is_reached_however_the_base_url_was_written(base):
+    """Providers document the full endpoint, so that is what gets pasted.
+
+    Appending blindly produced .../chat/completions/chat/completions, a 404,
+    and a silent no-reply with nothing to point at.
+    """
+    import httpx
+
+    from wa_mcp.trigger.backends import Context, reply_via_model
+    from wa_mcp.trigger.settings import ModelBackend
+
+    seen = {}
+
+    async def handler(request):
+        seen["url"] = str(request.url)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    ctx = Context(message="hi", chat_name="C", chat_jid="1@s.whatsapp.net",
+                  sender_name="S", sender_jid="1@s.whatsapp.net", me_name="me",
+                  message_id="m", timestamp="0", history=[])
+    cfg = ModelBackend(base_url=base, api_key="k", model="m")
+    await reply_via_model(cfg, ctx,
+                          httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    assert seen["url"] == "https://openrouter.ai/api/v1/chat/completions"
+
+
+async def test_a_dead_backend_is_logged_loudly_not_at_debug(rt, caplog):
+    """A broken backend is not the same as a message that was out of scope.
+
+    Both were logged at debug, so a misconfigured endpoint looked exactly like
+    normal quiet operation — no reply, nothing in the log, nothing to chase.
+    """
+    import logging
+
+    async def handler(request):
+        return httpx.Response(404, text="No endpoint found")
+
+    eng = TriggerEngine(rt)
+    eng.settings = settings(reply={"personal": "all"})
+    eng._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with caplog.at_level(logging.WARNING, logger="wa_mcp.trigger.engine"):
+        d = await eng.consider(inbound())
+
+    assert d.fired is False and d.error is True
+    assert any("FAILED" in r.message for r in caplog.records), \
+        "a dead backend produced no warning"

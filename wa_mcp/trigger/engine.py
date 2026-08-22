@@ -31,6 +31,7 @@ class Decision:
     reply: str | None = None
     backend: str | None = None
     media: int = 0
+    error: bool = False
     notified: str | None = None
 
     def public(self) -> dict:
@@ -152,7 +153,8 @@ class TriggerEngine:
         try:
             ctx = await self._context(msg)
         except Exception as exc:
-            return self._record(Decision(False, f"could not build context: {exc}"))
+            return self._record(Decision(False, f"could not build context: {exc}",
+                                         error=True))
 
         backend = self.settings.backend
         try:
@@ -167,7 +169,7 @@ class TriggerEngine:
                 await self._say(msg, g.fallback_message)
             if self.settings.notify.on_error:
                 await self._notify(msg, reason)
-            return self._record(Decision(False, reason, backend=backend))
+            return self._record(Decision(False, reason, backend=backend, error=True))
 
         text = (text or "").strip()
 
@@ -207,7 +209,8 @@ class TriggerEngine:
                     self.note_generated(sent["message_id"])
             sent_media = await self._send_media(chat, media)
         except Exception as exc:
-            return self._record(Decision(False, f"send failed: {exc}", text, backend))
+            return self._record(Decision(False, f"send failed: {exc}", text, backend,
+                                         error=True))
         finally:
             if self.settings.show_typing:
                 try:
@@ -363,7 +366,12 @@ class TriggerEngine:
     def _record(self, d: Decision) -> Decision:
         entry = {"at": time.time(), **d.public()}
         self.log.appendleft(entry)
-        if d.fired:
+        if d.error:
+            # Something is misconfigured or broken, which is not the same as a
+            # message that was simply out of scope. Logging both at debug meant
+            # a dead backend looked exactly like normal quiet operation.
+            log.warning("auto-reply FAILED: %s", d.reason)
+        elif d.fired:
             log.info("auto-reply sent via %s", d.backend)
         else:
             log.debug("auto-reply skipped: %s", d.reason)

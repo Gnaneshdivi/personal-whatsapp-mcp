@@ -206,7 +206,13 @@ async def reply_via_model(cfg: ModelBackend, ctx: Context,
     if cfg.api_key:
         headers["Authorization"] = f"Bearer {cfg.api_key}"
 
-    url = cfg.base_url.rstrip("/") + "/chat/completions"
+    # Providers document the full endpoint, so that is what gets pasted in.
+    # Appending blindly produced .../chat/completions/chat/completions and a
+    # 404 that surfaced as "no reply" with nothing to point at. Accept either.
+    base = cfg.base_url.rstrip("/")
+    if base.endswith("/chat/completions"):
+        base = base[: -len("/chat/completions")]
+    url = base + "/chat/completions"
     body = {
         "model": cfg.model,
         "messages": messages,

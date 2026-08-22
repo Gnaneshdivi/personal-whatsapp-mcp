@@ -273,7 +273,9 @@ def build(rt, q: str, status: dict) -> str:
                                 "https://openrouter.ai/api/v1", listid="presets"),
             "Any endpoint that speaks the OpenAI chat-completions format — "
             "OpenRouter, OpenAI, Groq, Together, or Ollama and LM Studio on "
-            "localhost.")
+            "localhost.\n\nEnd it at /v1. Pasting the full .../chat/completions "
+            "URL your provider documents also works — that tail is trimmed "
+            "rather than appended twice.")
         + '<datalist id="presets">'
         + "".join(f'<option value="{esc(p)}">' for p in presets) + "</datalist>"
         + row("API key", text_in("model.api_key", "***" if t.model.api_key else "",
