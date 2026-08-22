@@ -439,9 +439,6 @@ def build(rt, q: str, status: dict) -> str:
         + row("Always alert me about", picker("notify.vip_contacts",
                                               n.vip_contacts, "direct"),
               "These people get through regardless of keywords.", wide=True)
-        + row("Never alert me about", picker("notify.mute_contacts",
-                                             n.mute_contacts, "direct"),
-              "Wins over everything else, including the list above.", wide=True)
         + row("Watch groups too", toggle("notify.watch_groups", n.watch_groups), "")
         + row("When the assistant asks for a human",
               toggle("notify.on_handoff", n.on_handoff),

@@ -167,7 +167,6 @@ class Notify:
     # it is a legitimate and common way to use this.
     on_keywords: list[str] = field(default_factory=list)
     vip_contacts: list[str] = field(default_factory=list)   # always tell me
-    mute_contacts: list[str] = field(default_factory=list)  # never tell me
     watch_groups: bool = False        # keyword watching inside groups too
 
     def watch_reason(self, text: str, sender: str, chat: str,
@@ -175,9 +174,6 @@ class Notify:
         """Why this message deserves a human's attention. None = it does not."""
         from ..whatsapp import jid as J
 
-        muted = {J.normalise(v) for v in self.mute_contacts or []}
-        if J.normalise(chat) in muted or J.normalise(sender) in muted:
-            return None
         if is_group and not self.watch_groups:
             return None
 

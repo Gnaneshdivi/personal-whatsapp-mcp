@@ -371,15 +371,6 @@ async def test_a_watched_contact_always_alerts(rt):
     assert "watched contact" in alert
 
 
-async def test_muted_contacts_never_alert_even_on_a_keyword(rt):
-    eng = TriggerEngine(rt)
-    eng.settings = TriggerSettings.from_dict({
-        "notify": {"jid": "919999999999", "on_keywords": ["urgent"],
-                   "mute_contacts": ["911@s.whatsapp.net"]}})
-    d = await eng.consider(inbound("urgent!!"))
-    assert d.notified is None and rt.wa.sent == []
-
-
 async def test_groups_are_not_watched_unless_asked(rt):
     eng = TriggerEngine(rt)
     eng.settings = TriggerSettings.from_dict({
@@ -474,3 +465,17 @@ async def test_a_pdf_is_sent_as_a_document(rt):
     d = await eng.consider(inbound())
     assert d.fired is True and d.media == 1
     assert rt.wa.media == [("911@s.whatsapp.net", "document")]
+
+
+async def test_a_saved_config_from_before_the_mute_list_still_loads(rt):
+    """`Never alert me about` was removed. Anyone who saved one has the key.
+
+    from_dict drops what it does not recognise, so this is only a guard against
+    someone later making it strict and breaking every existing install.
+    """
+    eng = TriggerEngine(rt)
+    eng.settings = TriggerSettings.from_dict({
+        "notify": {"jid": "919999999999", "on_keywords": ["urgent"],
+                   "mute_contacts": ["911@s.whatsapp.net"]}})
+    d = await eng.consider(inbound("urgent!!"))
+    assert d.notified is not None, "the stale key should be ignored, not obeyed"

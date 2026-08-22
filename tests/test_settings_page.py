@@ -101,7 +101,7 @@ FULL = {
               "max_replies_per_hour": 17, "max_reply_chars": 900},
     "notify": {"jid": "919100828649", "on_handoff": True, "on_blocked": True,
                "on_error": True, "on_keywords": ["urgent"],
-               "vip_contacts": ["1@s.whatsapp.net"], "mute_contacts": [],
+               "vip_contacts": ["1@s.whatsapp.net"],
                "watch_groups": True, "handoff_marker": "[[NOTIFY]]"},
 }
 
