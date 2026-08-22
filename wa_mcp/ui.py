@@ -125,7 +125,7 @@ button{font:inherit;cursor:pointer}
       padding:6px 16px;font-size:13px;margin-bottom:10px}
 .m{max-width:min(72%,620px);padding:6px 10px 5px;border-radius:8px;background:#202c33;
    align-self:flex-start;word-wrap:break-word;white-space:pre-wrap;position:relative}
-.m.me{background:#005c4b;align-self:flex-end}
+.m.me{background:#005c4b;align-self:flex-end;color:#fff}
 .m+.m{margin-top:1px}
 .m.first{margin-top:9px}
 .m .s{font-size:12.5px;color:#53bdeb;margin-bottom:2px;font-weight:500}
