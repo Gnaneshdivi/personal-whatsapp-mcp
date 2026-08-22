@@ -96,6 +96,12 @@ class Chat:
     unread_count: int = 0
     archived: bool = False
     pinned: bool = False
+    # Status of the newest message, and whether we sent it. Derived from the
+    # messages table rather than stored on the chat: a receipt changes status
+    # long after the message landed, and a cached copy here would sit stale
+    # showing one grey tick beside a conversation that has been read.
+    last_from_me: bool = False
+    last_status: str | None = None
 
     def public(self) -> dict[str, Any]:
         ts = from_ms(self.last_message_ts)
@@ -110,6 +116,8 @@ class Chat:
             "unread": self.unread_count,
             "archived": self.archived,
             "pinned": self.pinned,
+            "last_from_me": self.last_from_me,
+            "last_status": self.last_status if self.last_from_me else None,
         }
 
     @property

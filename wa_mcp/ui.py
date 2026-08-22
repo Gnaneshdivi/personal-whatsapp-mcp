@@ -103,7 +103,8 @@ button{font:inherit;cursor:pointer}
     text-overflow:ellipsis;flex:1}
 .badge{background:#00a884;color:#111b21;border-radius:11px;min-width:20px;
        text-align:center;padding:1px 6px;font-size:12px;font-weight:600;flex:none}
-.pin{font-size:12px;opacity:.6;flex:none}
+.pin{flex:none;display:inline-flex;color:#8696a0;opacity:.7}
+.ptk{flex:none;display:inline-flex;margin-right:-2px}
 .sec{padding:12px 16px 6px;font-size:12px;text-transform:uppercase;
      letter-spacing:.08em;color:#00a884;font-weight:600}
 .row.hit{padding-left:16px}
@@ -203,6 +204,9 @@ const TICK_TWO = `<svg viewBox="0 0 22 12" width="17" height="10.5" fill="none"
 
 // sent = one tick, delivered = two, read/played = two in blue. The colour is
 // the signal an agent acts on, so it is worth getting exactly right.
+const PIN = `<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">`
+  + `<path d="M14 2 22 10l-2.1 2.1-1.4-.5-3.6 3.6.5 3.4-1.8 1.8-4-4L4 22l-.7-.7 5.6-5.6-4-4L6.7 9.9l3.4.5 3.6-3.6-.5-1.4L14 2z"/></svg>`;
+
 function ticks(status) {
   if (!status) return "";
   const blue = (status === "read" || status === "played");
@@ -229,8 +233,8 @@ function renderChats() {
       <div class="mid">
         <div class="top"><span class="nm">${esc(c.name)}</span>
           <span class="when">${when(c.last_message_at)}</span></div>
-        <div class="bot"><span class="pv">${esc(c.last_message || "")}</span>
-          ${c.pinned ? '<span class="pin">📌</span>' : ""}
+        <div class="bot">${c.last_from_me ? `<span class="ptk">${ticks(c.last_status)}</span>` : ""}<span class="pv">${esc(c.last_message || "")}</span>
+          ${c.pinned ? `<span class="pin">${PIN}</span>` : ""}
           ${c.unread ? `<span class="badge">${c.unread}</span>` : ""}</div>
       </div></div>`).join("")
     || (query ? "" : '<div class="blank" style="padding:40px">No chats</div>');
@@ -404,6 +408,9 @@ es.addEventListener("wa", async e => {
       const n = document.querySelector(`.m[data-id="${CSS.escape(id)}"] .t .tk`);
       if (n) n.outerHTML = ticks(ev.status);
     });
+    // The sidebar shows the same tick, so it has to move too. Debounced:
+    // receipts arrive in bursts and each one would otherwise refetch the list.
+    loadChatsSoon();
     return;
   }
   if (!["message.received","message.sent"].includes(ev.type)) return;
@@ -419,6 +426,12 @@ es.addEventListener("wa", async e => {
   if (fresh.length) paint(fresh, false);
   if (atBottom) box.scrollTop = box.scrollHeight;
 });
+
+let chatsSoon = null;
+function loadChatsSoon() {
+  clearTimeout(chatsSoon);
+  chatsSoon = setTimeout(loadChats, 400);
+}
 
 /* ------------------------------------------------------------ composer */
 

@@ -183,7 +183,38 @@ class MongoStore(Store):
             q["$or"] = [{"name": rx}, {"chat_jid": rx}]
         cur = (self.db.chats.find(q)
                .sort([("pinned", -1), ("last_message_ts", -1)]).limit(limit))
-        return [_chat(d) async for d in cur]
+        chats = [_chat(d) async for d in cur]
+        await self._attach_last_status(chats)
+        return chats
+
+    async def _attach_last_status(self, chats: list[Chat]) -> None:
+        """Fill in the newest message's status for a page of chats.
+
+        The sidebar shows the same ticks as the thread, and this is derived
+        rather than cached on the chat document because a receipt arrives long
+        after the message did -- a stored copy would sit stale showing one grey
+        tick beside a conversation that has been read.
+
+        One aggregation for the whole page rather than a lookup per chat: the
+        sort hits the same (chat_jid, ts) index the message list uses, and
+        $first after it is just the newest row in each group.
+        """
+        if not chats:
+            return
+        jids = [c.chat_jid for c in chats]
+        cur = self.db.messages.aggregate([
+            {"$match": {"chat_jid": {"$in": jids}}},
+            {"$sort": {"chat_jid": 1, "ts": -1}},
+            {"$group": {"_id": "$chat_jid",
+                        "is_from_me": {"$first": "$is_from_me"},
+                        "status": {"$first": "$status"}}},
+        ])
+        newest = {d["_id"]: d async for d in cur}
+        for c in chats:
+            d = newest.get(c.chat_jid)
+            if d:
+                c.last_from_me = bool(d.get("is_from_me"))
+                c.last_status = d.get("status")
 
     async def get_chat(self, chat_jid: str) -> Chat | None:
         d = await self.db.chats.find_one({"chat_jid": chat_jid})

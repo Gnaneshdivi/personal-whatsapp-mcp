@@ -390,3 +390,53 @@ async def test_a_new_column_migrates_instead_of_needing_a_wipe(tmp_path):
         assert await store.set_status(["old1"], "read", now_ms()) == ["old1"]
     finally:
         await store.close()
+
+
+# ------------------------------------------------- ticks in the chat list
+
+async def test_chat_list_carries_the_newest_messages_status(store):
+    """The sidebar shows the same ticks as the open thread.
+
+    Derived from the messages table on every read rather than cached on the
+    chat row. A receipt arrives long after the message it refers to, so a
+    stored copy drifts: the thread would show two blue ticks while the list
+    beside it still showed one grey one for the same message.
+    """
+    await store.upsert_message(msg("m1", ts=1000, is_from_me=True))
+    await store.touch_chat("1@s.whatsapp.net", 1000, True, "hi")
+
+    (chat,) = [c for c in await store.list_chats(limit=10)
+               if c.chat_jid == "1@s.whatsapp.net"]
+    assert chat.last_from_me is True
+    assert chat.last_status == "sent"
+
+    # The receipt lands. Nothing rewrites the chat row -- the list still moves.
+    await store.set_status(["m1"], "read", 2000)
+    (chat,) = [c for c in await store.list_chats(limit=10)
+               if c.chat_jid == "1@s.whatsapp.net"]
+    assert chat.last_status == "read", "the tick did not follow the receipt"
+
+
+async def test_no_tick_when_the_last_word_was_theirs(store):
+    """WhatsApp shows a tick only against your own message.
+
+    Their reply landing after yours must clear it, or the list claims delivery
+    of a message that is no longer the one being previewed.
+    """
+    await store.upsert_message(msg("mine", ts=1000, is_from_me=True))
+    await store.upsert_message(msg("theirs", ts=2000, is_from_me=False))
+    await store.touch_chat("1@s.whatsapp.net", 2000, False, "their reply")
+
+    (chat,) = [c for c in await store.list_chats(limit=10)
+               if c.chat_jid == "1@s.whatsapp.net"]
+    assert chat.last_from_me is False
+    assert chat.public()["last_status"] is None
+
+
+async def test_a_chat_with_no_messages_has_no_tick(store):
+    """Chats arrive from history sync before any message body does."""
+    await store.upsert_chat_meta("2@s.whatsapp.net", name="Empty")
+    (chat,) = [c for c in await store.list_chats(limit=10)
+               if c.chat_jid == "2@s.whatsapp.net"]
+    assert chat.last_from_me is False
+    assert chat.last_status is None

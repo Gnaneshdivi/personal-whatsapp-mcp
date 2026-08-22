@@ -285,7 +285,7 @@ class SQLiteStore(Store):
 
     async def list_chats(self, *, limit: int = 30, archived: bool = False,
                          query: str | None = None, kind: str = "all") -> list[Chat]:
-        sql = "SELECT * FROM chats WHERE archived = ?"
+        sql = _CHATS_SELECT + " WHERE archived = ?"
         args: list[Any] = [int(archived)]
         if kind == "groups":
             sql += " AND is_group = 1"
@@ -435,13 +435,34 @@ def _msg(r: aiosqlite.Row) -> Message:
     )
 
 
+# The chat list needs the newest message's status so the sidebar can show the
+# same ticks as the thread. Derived here rather than cached on the chat row:
+# a receipt lands long after the message did, and the two would drift.
+# Both subqueries seek ix_messages_chat_ts(chat_jid, ts DESC), so this costs
+# two index lookups per returned row -- a page of chats, never a scan.
+_LAST_MESSAGE = """
+    (SELECT m.is_from_me FROM messages m
+      WHERE m.chat_jid = chats.chat_jid ORDER BY m.ts DESC LIMIT 1) AS last_from_me,
+    (SELECT m.status FROM messages m
+      WHERE m.chat_jid = chats.chat_jid ORDER BY m.ts DESC LIMIT 1) AS last_status
+"""
+_CHATS_SELECT = f"SELECT chats.*, {_LAST_MESSAGE} FROM chats"
+
+
 def _chat(r: aiosqlite.Row) -> Chat:
     return Chat(
         chat_jid=r["chat_jid"], name=r["name"], is_group=bool(r["is_group"]),
         last_message_ts=r["last_message_ts"], last_message_text=r["last_message_text"],
         unread_count=int(r["unread_count"]), archived=bool(r["archived"]),
         pinned=bool(r["pinned"] if "pinned" in r.keys() else 0),
+        last_from_me=bool(_opt(r, "last_from_me")),
+        last_status=_opt(r, "last_status"),
     )
+
+
+def _opt(r: aiosqlite.Row, key: str):
+    """Columns only the chat-list query selects; other callers pass plain rows."""
+    return r[key] if key in r.keys() else None
 
 
 def _as_literal(query: str) -> str:

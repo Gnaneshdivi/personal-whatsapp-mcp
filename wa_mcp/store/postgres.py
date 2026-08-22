@@ -200,7 +200,7 @@ class PostgresStore(Store):
 
     async def list_chats(self, *, limit: int = 30, archived: bool = False,
                          query: str | None = None, kind: str = "all") -> list[Chat]:
-        sql = "SELECT * FROM wa_chats WHERE archived = $1"
+        sql = _CHATS_SELECT + " WHERE archived = $1"
         args: list[Any] = [archived]
         if kind == "groups":
             sql += " AND is_group"
@@ -326,10 +326,35 @@ def _msg(r) -> Message:
     )
 
 
+# The sidebar shows the same ticks as the thread, so the chat list carries the
+# newest message's status. Derived, not cached on the chat row: a receipt lands
+# long after the message did and a stored copy would drift. LATERAL rather than
+# two correlated subqueries so the newest row is read once; it seeks the same
+# (chat_jid, ts DESC) index the message list uses.
+_CHATS_SELECT = """
+SELECT wa_chats.*, last.is_from_me AS last_from_me, last.status AS last_status
+FROM wa_chats
+LEFT JOIN LATERAL (
+    SELECT m.is_from_me, m.status FROM wa_messages m
+    WHERE m.chat_jid = wa_chats.chat_jid ORDER BY m.ts DESC LIMIT 1
+) AS last ON TRUE
+"""
+
+
 def _chat(r) -> Chat:
     return Chat(
         chat_jid=r["chat_jid"], name=r["name"], is_group=bool(r["is_group"]),
         last_message_ts=r["last_message_ts"], last_message_text=r["last_message_text"],
         unread_count=int(r["unread_count"]), archived=bool(r["archived"]),
         pinned=bool(r["pinned"]),
+        last_from_me=bool(_opt(r, "last_from_me")),
+        last_status=_opt(r, "last_status"),
     )
+
+
+def _opt(r, key: str):
+    """Only the chat-list query selects these; get_chat passes a plain row."""
+    try:
+        return r[key]
+    except KeyError:
+        return None
