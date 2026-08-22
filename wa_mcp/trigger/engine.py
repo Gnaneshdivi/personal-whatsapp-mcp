@@ -137,11 +137,17 @@ class TriggerEngine:
     # ------------------------------------------------------------ pipeline
 
     async def consider(self, msg: Inbound) -> Decision:
+        # Watch rules run FIRST and independently of replying: "tell me when
+        # someone says urgent" has to work with auto-reply switched off, which
+        # is how a lot of people will use this.
+        watched = await self._watch(msg)
+
         why = self._why_not(msg)
         if why:
             if why.startswith("guardrail:"):
-                return await self._refuse(msg, why)
-            return self._record(Decision(False, why))
+                d = await self._refuse(msg, why)
+                return d if not watched else self._touch(d, watched)
+            return self._record(Decision(False, why, notified=watched))
 
         try:
             ctx = await self._context(msg)
@@ -214,7 +220,26 @@ class TriggerEngine:
             notified = await self._notify(msg, "the assistant asked for a human")
 
         return self._record(Decision(True, "sent", text, backend,
-                                     images=sent_images, notified=notified))
+                                     images=sent_images,
+                                     notified=notified or watched))
+
+    async def _watch(self, msg: Inbound) -> str | None:
+        """Alert a human because of who sent it or what it said."""
+        n = self.settings.notify
+        if not n.watching or msg.is_from_me or msg.message_id in self._generated:
+            return None
+        # Held during sync for the same reason replies are: history replay would
+        # fire an alert for every old message matching the word.
+        if self.rt.wa is None or not self.rt.wa.sync.state.ready:
+            return None
+        reason = n.watch_reason(msg.text, msg.sender_jid, msg.chat_jid, msg.is_group)
+        if not reason:
+            return None
+        return await self._notify(msg, reason)
+
+    def _touch(self, d: Decision, notified: str) -> Decision:
+        d.notified = d.notified or notified
+        return d
 
     # ------------------------------------------------------------ outputs
 

@@ -352,6 +352,20 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
   <label>Hand-off marker the model can emit</label>
   <input name="notify.handoff_marker" value="{_esc(t.notify.handoff_marker)}">
 
+  <h2>Tell me when</h2>
+  <p style="color:#8696a0;font-size:12px">These work even with auto-reply off —
+     useful for watching a number without answering on it.</p>
+  <label>Alert me when a message contains (comma separated)</label>
+  <input name="notify.on_keywords" value="{_esc(', '.join(t.notify.on_keywords))}"
+         placeholder="urgent, complaint, cancel">
+  <label>Always alert me when these people message</label>
+  <select name="notify.vip_contacts" multiple size="4">{opts}</select>
+  <label>Never alert me about these</label>
+  <select name="notify.mute_contacts" multiple size="4">{opts}</select>
+  <label>Watch group chats too</label>
+  <select name="notify.watch_groups">
+    {sel("yes" if t.notify.watch_groups else "no", "no", "yes")}</select>
+
   <h2>Images</h2>
   <label>Download images the model produces and send them as photos</label>
   <select name="send_images">{sel("yes" if t.send_images else "no", "no", "yes")}</select>
@@ -398,7 +412,7 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
      if (el.type === 'number') v = parseInt(v||'0', 10);
      // Comma lists are friendlier to type than JSON arrays.
      if (['guardrails.allowed_topics','guardrails.blocked_topics',
-          'guardrails.blocked_keywords'].includes(el.name))
+          'guardrails.blocked_keywords','notify.on_keywords'].includes(el.name))
        v = String(v).split(',').map(x=>x.trim()).filter(Boolean);
      const p = el.name.split('.');
      if (p.length === 1) o[p[0]] = v; else o[p[0]][p[1]] = v;

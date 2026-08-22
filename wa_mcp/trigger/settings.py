@@ -161,6 +161,40 @@ class Notify:
     on_handoff: bool = True           # the model asked for a human
     on_blocked: bool = False          # a guardrail refused
     on_error: bool = False            # the backend failed
+
+    # "Tell me when…" — these fire independently of replying, so they work with
+    # auto-reply switched off entirely. Watching a number without answering on
+    # it is a legitimate and common way to use this.
+    on_keywords: list[str] = field(default_factory=list)
+    vip_contacts: list[str] = field(default_factory=list)   # always tell me
+    mute_contacts: list[str] = field(default_factory=list)  # never tell me
+    watch_groups: bool = False        # keyword watching inside groups too
+
+    def watch_reason(self, text: str, sender: str, chat: str,
+                     is_group: bool) -> str | None:
+        """Why this message deserves a human's attention. None = it does not."""
+        from ..whatsapp import jid as J
+
+        muted = {J.normalise(v) for v in self.mute_contacts or []}
+        if J.normalise(chat) in muted or J.normalise(sender) in muted:
+            return None
+        if is_group and not self.watch_groups:
+            return None
+
+        vips = {J.normalise(v) for v in self.vip_contacts or []}
+        if J.normalise(chat) in vips or J.normalise(sender) in vips:
+            return "message from a watched contact"
+
+        low = (text or "").lower()
+        for word in self.on_keywords or []:
+            w = word.strip().lower()
+            if w and w in low:
+                return f"matched watched word {word.strip()!r}"
+        return None
+
+    @property
+    def watching(self) -> bool:
+        return bool(self.on_keywords or self.vip_contacts)
     # A reply containing this marker is treated as "get a human", and the marker
     # is stripped before anything is sent to the contact.
     handoff_marker: str = "[[NOTIFY]]"

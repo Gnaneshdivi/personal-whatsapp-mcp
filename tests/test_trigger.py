@@ -239,7 +239,9 @@ async def test_model_backend_sends_real_conversation_turns(rt):
     roles = [m["role"] for m in captured["messages"]]
     assert roles[0] == "system"
     assert "user" in roles and "assistant" in roles
-    assert captured["messages"][-1]["content"] == "tomorrow"
+    # Inbound content is quoted inside a nonce tag — see test_injection.py.
+    assert "tomorrow" in captured["messages"][-1]["content"]
+    assert captured["messages"][-1]["content"].startswith("<msg id=")
 
 
 async def test_model_http_error_is_reported_not_swallowed(rt):

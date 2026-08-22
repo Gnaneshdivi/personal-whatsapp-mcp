@@ -336,3 +336,91 @@ async def test_sent_images_are_registered_against_the_loop_guard(rt):
     eng._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     await eng.consider(inbound())
     assert "i1" in eng._generated
+
+
+# ====================================================== notify me when
+
+async def test_watch_keyword_alerts_even_with_replies_off(rt):
+    """The point of watch rules: monitor a number without answering on it."""
+    eng = TriggerEngine(rt)
+    eng.settings = TriggerSettings.from_dict({
+        "enabled": False,
+        "notify": {"jid": "919999999999", "on_keywords": ["urgent"]},
+    })
+    d = await eng.consider(inbound("this is URGENT please help"))
+    assert d.fired is False                      # no reply
+    assert d.notified == "919999999999@s.whatsapp.net"
+    assert any(to.startswith("919999999999") for to, _ in rt.wa.sent)
+
+
+async def test_a_non_matching_message_alerts_nobody(rt):
+    eng = TriggerEngine(rt)
+    eng.settings = TriggerSettings.from_dict({
+        "notify": {"jid": "919999999999", "on_keywords": ["urgent"]}})
+    d = await eng.consider(inbound("just saying hello"))
+    assert d.notified is None and rt.wa.sent == []
+
+
+async def test_a_watched_contact_always_alerts(rt):
+    eng = TriggerEngine(rt)
+    eng.settings = TriggerSettings.from_dict({
+        "notify": {"jid": "919999999999", "vip_contacts": ["911@s.whatsapp.net"]}})
+    d = await eng.consider(inbound("morning"))
+    assert d.notified is not None
+    alert = next(t for to, t in rt.wa.sent if to.startswith("919999999999"))
+    assert "watched contact" in alert
+
+
+async def test_muted_contacts_never_alert_even_on_a_keyword(rt):
+    eng = TriggerEngine(rt)
+    eng.settings = TriggerSettings.from_dict({
+        "notify": {"jid": "919999999999", "on_keywords": ["urgent"],
+                   "mute_contacts": ["911@s.whatsapp.net"]}})
+    d = await eng.consider(inbound("urgent!!"))
+    assert d.notified is None and rt.wa.sent == []
+
+
+async def test_groups_are_not_watched_unless_asked(rt):
+    eng = TriggerEngine(rt)
+    eng.settings = TriggerSettings.from_dict({
+        "notify": {"jid": "919999999999", "on_keywords": ["urgent"]}})
+    d = await eng.consider(inbound("urgent", chat_jid="1-2@g.us", is_group=True))
+    assert d.notified is None
+
+    eng.settings = TriggerSettings.from_dict({
+        "notify": {"jid": "919999999999", "on_keywords": ["urgent"],
+                   "watch_groups": True}})
+    d = await eng.consider(inbound("urgent", chat_jid="1-2@g.us",
+                                   is_group=True, message_id="m2"))
+    assert d.notified is not None
+
+
+async def test_watching_is_held_during_sync_like_replies(rt):
+    """History replay would otherwise alert for every old matching message."""
+    from wa_mcp.whatsapp.sync import SyncTracker
+    rt.wa.sync = SyncTracker()
+    rt.wa.sync.connected(); rt.wa.sync.offline_preview(total=200)
+    eng = TriggerEngine(rt)
+    eng.settings = TriggerSettings.from_dict({
+        "notify": {"jid": "919999999999", "on_keywords": ["urgent"]}})
+    d = await eng.consider(inbound("urgent"))
+    assert d.notified is None and rt.wa.sent == []
+
+
+async def test_a_watched_message_can_also_be_replied_to(rt):
+    eng = TriggerEngine(rt)
+    eng.settings = settings(notify={"jid": "919999999999", "on_keywords": ["urgent"]})
+    eng._http = model(reply="on it")
+    d = await eng.consider(inbound("urgent problem"))
+    assert d.fired is True and d.notified is not None
+    targets = [to for to, _ in rt.wa.sent]
+    assert "911@s.whatsapp.net" in targets           # the reply
+    assert "919999999999@s.whatsapp.net" in targets  # the alert
+
+
+async def test_our_own_messages_never_trigger_a_watch(rt):
+    eng = TriggerEngine(rt)
+    eng.settings = TriggerSettings.from_dict({
+        "notify": {"jid": "919999999999", "on_keywords": ["urgent"]}})
+    d = await eng.consider(inbound("urgent", is_from_me=True))
+    assert d.notified is None
