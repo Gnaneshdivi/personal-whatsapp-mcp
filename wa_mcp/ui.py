@@ -134,6 +134,8 @@ button{font:inherit;cursor:pointer}
 .tk{display:inline-flex;color:#8696a0}
 .tk.rd{color:#53bdeb}
 .m img{max-width:100%;border-radius:6px;display:block;margin-bottom:4px}
+.m a{color:#53bdeb;text-decoration:underline}
+.m.me a{color:#a7f3e4}
 .day{align-self:center;background:#182229;color:#8696a0;font-size:12px;
      padding:4px 12px;border-radius:10px;margin:12px 0 6px}
 .sys{align-self:center;color:#8696a0;font-size:12.5px;margin:10px 0}
@@ -264,6 +266,30 @@ function renderChats() {
 
 /* --------------------------------------------------------- conversation */
 
+/* Message text arrives escaped. Turning URLs and chat addresses into links
+   after escaping keeps the injection guarantee: nothing here reads the raw
+   message, so a message containing markup still renders as text.
+
+   Addresses matter because our own alerts quote one -- "Needs you: … (918…
+   @s.whatsapp.net)" -- and reading it meant copying the number by hand to
+   find the conversation it is about. */
+const URL_RE = /https?:\/\/[^\s<]+[^\s<.,;:!?)\]}'"]/g;
+const JID_RE = /\b(\d{6,})@s\.whatsapp\.net\b/g;
+
+function linkify(escaped) {
+  return escaped
+    .replace(URL_RE, u => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`)
+    .replace(JID_RE, (full, num) =>
+      `<a href="#" class="jl" data-jid="${full}" title="Open this chat">${num}</a>`);
+}
+
+document.addEventListener("click", e => {
+  const a = e.target.closest("a.jl");
+  if (!a) return;
+  e.preventDefault();
+  openChat(a.dataset.jid);
+});
+
 async function openChat(jid) {
   current = jid; oldest = null;
   $("#profile").style.display = "none";
@@ -302,7 +328,8 @@ function bubble(m, prev) {
             onerror="this.remove()">` : "";
   const body = m.revoked
     ? '<i style="opacity:.6">This message was deleted</i>'
-    : (m.text ? esc(m.text) : (img ? "" : `<i style="opacity:.6">[${esc(m.type)}]</i>`));
+    : (m.text ? linkify(esc(m.text))
+              : (img ? "" : `<i style="opacity:.6">[${esc(m.type)}]</i>`));
   const t = new Date(m.timestamp).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
   const tick = m.from_me ? ticks(m.status) : "";
   return `${day}<div class="m ${m.from_me ? "me" : ""} ${sameSpeaker ? "" : "first"}"

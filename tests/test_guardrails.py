@@ -554,3 +554,33 @@ async def test_a_config_saved_before_routes_existed_keeps_alerting(rt):
     assert eng.settings.notify.route == "number"
     d = await eng.consider(inbound("urgent!!"))
     assert d.notified == "919999999999@s.whatsapp.net"
+
+
+async def test_the_alert_carries_a_tappable_link_to_the_chat(rt):
+    """A bare address is not a link anywhere.
+
+    Reading an alert used to mean copying the number out by hand to find the
+    conversation it was about. WhatsApp turns a wa.me URL into a tap.
+    """
+    rt.wa.self_jid = "919100828649@s.whatsapp.net"
+    eng = TriggerEngine(rt)
+    eng.settings = TriggerSettings.from_dict({
+        "notify": {"route": "me", "on_keywords": ["urgent"]}})
+    await eng.consider(inbound("urgent!!"))
+    alert = next(t for to, t in rt.wa.sent if "Needs you" in t)
+    assert "https://wa.me/911" in alert
+
+
+async def test_a_lid_sender_gets_no_link_rather_than_a_wrong_one(rt):
+    """LIDs are all digits but are not phone numbers.
+
+    Building wa.me from one produces a link to a number that is not theirs and
+    may well be somebody else's, which is worse than no link at all.
+    """
+    from wa_mcp.trigger.backends import Context
+
+    ctx = Context(message="hi", chat_name="C", chat_jid="207696196305131@lid",
+                  sender_name="S", sender_jid="207696196305131@lid",
+                  me_name="me", message_id="m", timestamp="0", history=[])
+    assert ctx.chat_link() == ""
+    assert "wa.me" not in ctx.tokens()["chat_link"]

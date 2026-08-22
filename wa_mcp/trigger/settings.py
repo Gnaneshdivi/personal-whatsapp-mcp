@@ -200,10 +200,17 @@ class Notify:
     # A reply containing this marker is treated as "get a human", and the marker
     # is stripped before anything is sent to the contact.
     handoff_marker: str = "[[NOTIFY]]"
+    # The link is the point of the last line: WhatsApp turns a wa.me URL into
+    # a tap that opens the conversation, where the bare address it used to
+    # print was something you had to copy out by hand.
     template: str = (
         "Needs you: {{chat_name}} ({{sender_jid}})\n"
         "Their message: {{message}}\n"
-        "Reason: {{reason}}"
+        "Reason: {{reason}}\n"
+        # On its own line and unlabelled, so a sender with no phone number
+        # (a LID) leaves a blank the send strips, rather than a stranded
+        # "Open:" with nothing after it. WhatsApp links a bare URL anyway.
+        "{{chat_link}}"
     )
 
 

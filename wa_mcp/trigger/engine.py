@@ -321,7 +321,7 @@ class TriggerEngine:
         try:
             ctx = await self._context(msg)
             ctx.reason = reason
-            body = render(n.template, ctx)
+            body = render(n.template, ctx).strip()
             sent = await self.rt.wa.send_text(target, body)
             if sent.get("message_id"):
                 self.note_generated(sent["message_id"])

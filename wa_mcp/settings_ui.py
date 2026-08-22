@@ -46,6 +46,8 @@ TOKENS = [
     ("{{message_id}}", "Unique id of the incoming message."),
     ("{{timestamp}}", "When it arrived."),
     ("{{history}}", "Recent turns of this conversation, oldest first."),
+    ("{{chat_link}}", "A wa.me link WhatsApp turns into a tap that opens the chat. "
+                      "Empty for @lid senders, which carry no phone number."),
     ("{{policy}}", "Your guardrails, rendered as instructions."),
     ("{{reason}}", "Why an alert fired. Only substituted in the alert wording."),
 ]

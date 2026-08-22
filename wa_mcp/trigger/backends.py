@@ -37,6 +37,22 @@ class Context:
     policy: str = ""                        # guardrails, rendered for the model
     reason: str = ""                        # only used by notification templates
 
+    def chat_link(self) -> str:
+        """A wa.me link to whoever sent this, or "" when there is no number.
+
+        LID senders (@lid) carry no phone number by design, so there is nothing
+        to build a link from and the token renders empty rather than a URL that
+        goes nowhere.
+        """
+        jid = self.sender_jid or self.chat_jid or ""
+        # The domain decides, not the shape. A LID is all digits too, so an
+        # isdigit() test happily builds wa.me/207696196305131 — a link to a
+        # number that is not theirs and may well be someone else's.
+        if not jid.endswith("@s.whatsapp.net"):
+            return ""
+        user = jid.split("@")[0].split(":")[0]
+        return f"https://wa.me/{user}" if user.isdigit() else ""
+
     def history_text(self) -> str:
         return "\n".join(f"{speaker}: {text}" for _fm, speaker, text in self.history)
 
@@ -51,6 +67,11 @@ class Context:
             "message_id": self.message_id,
             "timestamp": self.timestamp,
             "history": self.history_text(),
+            # wa.me is what makes an alert actionable inside WhatsApp itself:
+            # the client turns it into a tap that opens the conversation. A
+            # bare JID is not a link anywhere, so reading an alert meant
+            # copying the number out by hand to find the chat it was about.
+            "chat_link": self.chat_link(),
             "policy": self.policy,
             "reason": self.reason,
         }
