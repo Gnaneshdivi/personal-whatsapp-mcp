@@ -194,7 +194,10 @@ async def test_unknown_contact_name_names_the_next_step(client):
                       "arguments": {"to": "Nobody", "text": "hi"}}))["result"]
     sc = out["structuredContent"]
     assert sc["ok"] is False
-    assert "wa_list_chats" in sc["error"]
+    # Names both places that were searched, so the answer is not just "no",
+    # and points at the tool that can look rather than leaving it there.
+    assert "no chat or contact matching" in sc["error"]
+    assert "wa_search" in sc["error"]
 
 
 

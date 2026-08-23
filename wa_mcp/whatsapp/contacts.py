@@ -96,6 +96,23 @@ class ContactBook:
     def __len__(self) -> int:
         return len(self._names)
 
+    def search(self, query: str, limit: int = 20) -> list[tuple[str, str]]:
+        """Address-book matches as (jid, name), case-insensitive substring.
+
+        Search otherwise only covers chats, and a chat exists only once someone
+        has been messaged. Measured here: 8,518 contacts known to WhatsApp
+        against 1,082 chats, 514 of them named — so most of the address book
+        was unreachable by name, and asking to message someone you have never
+        written to came back as "no chat matching".
+        """
+        q = (query or "").strip().lower()
+        if not q:
+            return []
+        exact = [(j, n) for j, n in self._names.items() if n.lower() == q]
+        if exact:
+            return exact[:limit]
+        return [(j, n) for j, n in self._names.items() if q in n.lower()][:limit]
+
     def get(self, chat_jid: str) -> str | None:
         return self._names.get(J.normalise(chat_jid))
 

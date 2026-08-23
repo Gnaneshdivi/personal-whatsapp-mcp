@@ -99,31 +99,39 @@ async def _resolve_chat(value: str) -> str:
 
     from .search import find_chats
 
-    # Wider than the listing we show: search is substring-based, so an exact
-    # match can sit outside the first few hits and get missed entirely.
-    found = await find_chats(rt(), query=value, limit=50)
-    if not found:
-        raise ToolError(f"no chat matching {value!r}. Use wa_list_chats to see them.")
+    # Both sources, merged. Looking at chats first and stopping there hid the
+    # address book whenever any conversation happened to match: "akbar" landed
+    # on "Asif Akbar Brother" without ever mentioning that "Akbar Ktr Srm" and
+    # "Akbar Baig" also exist. Ambiguity across the two is still ambiguity.
+    candidates: dict[str, tuple[str, str]] = {}
+    for c, name in await find_chats(rt(), query=value, limit=50):
+        candidates[J.normalise(c.chat_jid)] = (c.chat_jid, name)
+    for jid, name in rt().contacts.search(value, limit=50):
+        candidates.setdefault(J.normalise(jid), (jid, name))
 
-    # An exact name wins over chats that merely contain it. Measured on a real
-    # account: 18 names are substrings of other names, so "Dad" was ambiguous
-    # against "Dad's office" and could not be sent to at all.
-    exact = [(c, n) for c, n in found if (n or "").strip().lower() == value.lower()]
+    if not candidates:
+        raise ToolError(f"no chat or contact matching {value!r}. "
+                        f"Use wa_search to look, or pass a phone number.")
+
+    # An exact name wins outright: 18 names here are contained in some other
+    # name, so "Dad" competed with "Dad's office" and could not be sent to.
+    hits = list(candidates.values())
+    exact = [h for h in hits if (h[1] or "").strip().lower() == value.lower()]
     if len(exact) == 1:
-        return exact[0][0].chat_jid
+        return exact[0][0]
     if exact:
-        found = exact          # narrow to the real ambiguity before listing
+        hits = exact                    # narrow to the real tie before listing
 
-    if len(found) > 1:
-        listing = "\n".join(f"    {name}  {c.chat_jid}" for c, name in found[:8])
-        same = len({(n or "").strip().lower() for _, n in found[:8]}) == 1
-        hint = ("These share the same name, so the number is the only thing "
-                "telling them apart — ASK which one is meant. Do not guess."
-                if same else
-                "Pass the exact name or the JID. If it is not obvious which is "
-                "meant, ask rather than guess.")
-        raise ToolError(f"{len(found)} chats match {value!r}:\n{listing}\n{hint}")
-    return found[0][0].chat_jid
+    if len(hits) == 1:
+        return hits[0][0]
+
+    listing = "\n".join(f"    {name}  {jid}" for jid, name in hits[:8])
+    same = len({(n or "").strip().lower() for _, n in hits[:8]}) == 1
+    detail = ("They share a name, so the number is the only thing telling them "
+              "apart." if same else "")
+    raise ToolError(
+        f"{len(hits)} chats or contacts match {value!r}. ASK which one is "
+        f"meant and wait for an answer — do not pick one. {detail}\n{listing}")
 
 
 def _chat_out(c) -> dict:
@@ -220,6 +228,8 @@ async def wa_get_messages(chat: str, limit: int = 30, before_id: str = "",
 
     `chat` may be a JID, a phone number or a contact name.
     `before_id` pages backwards. `since`/`until` are ISO-8601 timestamps.
+    
+    Accepts a name and searches conversations and the address book. Several matches are listed rather than guessed — ask which is meant.
     """
     try:
         jid = await _resolve_chat(chat)
@@ -278,11 +288,17 @@ async def wa_send(to: str, text: str, reply_to: str = "",
                    reply_token: str = "") -> dict[str, Any]:
     """Send a text message.
 
-    `to` may be a JID, an international phone number, or a contact name — if a
-    name matches several chats the error lists them, so ask the user which.
-    `reply_to` quotes an existing message id.
+    Naming a person or a number: ALWAYS resolve it before sending. Pass the
+    name and let this tool search — it looks through both conversations and the
+    full address book, including people you have never messaged.
 
-    Confirm the recipient with the user before messaging someone new.
+    If more than one match comes back the tool refuses and lists them. Show
+    that list to the user, ask which one, and WAIT for the answer. Never pick
+    the first, the most recent, or the one that seems likeliest — a message
+    sent to the wrong person cannot be recalled.
+
+    `to` takes a JID, an international phone number (spaces and dashes are
+    fine), or a contact name. `reply_to` quotes an existing message id.
     """
     try:
         jid = await _resolve_chat(to)
@@ -299,6 +315,8 @@ async def wa_send_media(to: str, media_base64: str, kind: str = "image",
 
     `media_base64` is the raw file bytes, base64-encoded.
     `kind` is one of: image, video, audio, document, sticker.
+    
+    Same resolution rules as wa_send: search by name, and ask when more than one matches.
     """
     try:
         jid = await _resolve_chat(to)
@@ -336,6 +354,11 @@ async def wa_typing(chat: str, typing: bool = True,
 
     Worth doing before a slow reply — it is what makes an automated response
     read as a person rather than a bot posting instantly.
+    
+    Same resolution rules as wa_send.
+    
+    Resolves `to` the same way as wa_send: by name across chats and the
+    address book, refusing and listing when several match — ask which.
     """
     try:
         return {"ok": True, **await rt().wa.set_typing(await _resolve_chat(chat), typing)}

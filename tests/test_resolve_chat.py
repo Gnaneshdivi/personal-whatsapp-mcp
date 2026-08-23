@@ -55,7 +55,7 @@ async def test_two_people_with_the_same_name_must_be_asked_about(rt):
         await _resolve_chat("Surya SRM")
     msg = str(e.value)
     assert "1@s.whatsapp.net" in msg and "2@s.whatsapp.net" in msg
-    assert "ASK which one" in msg, "the model is not told to ask"
+    assert "ASK which one is meant" in msg, "the model is not told to ask"
 
 
 async def test_an_ambiguous_partial_name_still_refuses(rt):
@@ -66,7 +66,7 @@ async def test_an_ambiguous_partial_name_still_refuses(rt):
 
     with pytest.raises(ToolError) as e:
         await _resolve_chat("Ravi")
-    assert "2 chats match" in str(e.value)
+    assert "2 chats or contacts match" in str(e.value)
 
 
 async def test_a_duplicate_listing_is_narrowed_to_the_real_tie(rt):
@@ -81,7 +81,7 @@ async def test_a_duplicate_listing_is_narrowed_to_the_real_tie(rt):
     with pytest.raises(ToolError) as e:
         await _resolve_chat("Trip")
     msg = str(e.value)
-    assert "2 chats match" in msg, msg
+    assert "2 chats or contacts match" in msg, msg
     assert "Trip to Goa" not in msg
 
 
@@ -100,4 +100,57 @@ async def test_an_unknown_name_says_so(rt):
     await add(rt, "1@s.whatsapp.net", "Dad")
     with pytest.raises(ToolError) as e:
         await _resolve_chat("Nobody")
-    assert "no chat matching" in str(e.value)
+    assert "no chat or contact matching" in str(e.value)
+
+
+# ------------------------------------------------- the address book too
+
+async def test_someone_never_messaged_can_still_be_found(rt):
+    """A chat exists only once you have written to somebody.
+
+    Measured on a real account: 8,518 contacts against 1,082 chats, 514 of them
+    named. Searching chats alone made most of the address book unreachable —
+    "Akbar Ktr Srm" came back as no such contact while sitting in WhatsApp's
+    own store the whole time.
+    """
+    from wa_mcp.app import _resolve_chat
+
+    rt.contacts._names = {"918056088288@s.whatsapp.net": "Akbar Ktr Srm"}
+    assert await _resolve_chat("Akbar Ktr Srm") == "918056088288@s.whatsapp.net"
+    assert await _resolve_chat("akbar ktr srm") == "918056088288@s.whatsapp.net"
+
+
+async def test_a_chat_match_does_not_hide_other_contacts(rt):
+    """The two sources are merged before deciding, not tried in order.
+
+    Stopping at the first source meant "akbar" resolved silently to whichever
+    conversation happened to match, never mentioning the two other Akbars in
+    the address book.
+    """
+    from wa_mcp.app import ToolError, _resolve_chat
+
+    await add(rt, "1@s.whatsapp.net", "Asif Akbar Brother")
+    rt.contacts._names = {"2@s.whatsapp.net": "Akbar Ktr Srm",
+                          "3@s.whatsapp.net": "Akbar Baig"}
+    with pytest.raises(ToolError) as e:
+        await _resolve_chat("akbar")
+    msg = str(e.value)
+    assert "3 chats or contacts match" in msg
+    for name in ("Asif Akbar Brother", "Akbar Ktr Srm", "Akbar Baig"):
+        assert name in msg
+
+
+async def test_an_exact_contact_name_still_wins(rt):
+    from wa_mcp.app import _resolve_chat
+
+    await add(rt, "1@s.whatsapp.net", "Akbar Ktr Srm office")
+    rt.contacts._names = {"2@s.whatsapp.net": "Akbar Ktr Srm"}
+    assert await _resolve_chat("Akbar Ktr Srm") == "2@s.whatsapp.net"
+
+
+async def test_a_contact_is_not_listed_twice_when_it_also_has_a_chat(rt):
+    from wa_mcp.app import _resolve_chat
+
+    await add(rt, "1@s.whatsapp.net", "Dad")
+    rt.contacts._names = {"1@s.whatsapp.net": "Dad"}     # same person
+    assert await _resolve_chat("Dad") == "1@s.whatsapp.net"
