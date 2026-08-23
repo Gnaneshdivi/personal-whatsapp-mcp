@@ -7,6 +7,7 @@ in the store by the time the next tool call runs.
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 from datetime import datetime, timezone
 from typing import Any
@@ -86,16 +87,42 @@ async def _resolve_chat(value: str) -> str:
     value = (value or "").strip()
     if not value:
         raise ToolError("no chat given")
-    if "@" in value or value.lstrip("+").isdigit():
-        return J.to_jid(value)
+    # Phone numbers get written with spaces, dashes and brackets — by people
+    # and by models copying them out of a contact card. Testing isdigit() on
+    # the raw string sent "+91 98123 45678" down the name-search path, where
+    # it matched nothing and failed as an unknown contact.
+    if "@" in value:
+        return J.to_jid(value)          # a JID: dots are part of the domain
+    compact = re.sub(r"[\s\-().]", "", value)
+    if compact.lstrip("+").isdigit() and len(compact.lstrip("+")) >= 7:
+        return J.to_jid(compact)
 
     from .search import find_chats
-    found = await find_chats(rt(), query=value, limit=9)
+
+    # Wider than the listing we show: search is substring-based, so an exact
+    # match can sit outside the first few hits and get missed entirely.
+    found = await find_chats(rt(), query=value, limit=50)
     if not found:
         raise ToolError(f"no chat matching {value!r}. Use wa_list_chats to see them.")
+
+    # An exact name wins over chats that merely contain it. Measured on a real
+    # account: 18 names are substrings of other names, so "Dad" was ambiguous
+    # against "Dad's office" and could not be sent to at all.
+    exact = [(c, n) for c, n in found if (n or "").strip().lower() == value.lower()]
+    if len(exact) == 1:
+        return exact[0][0].chat_jid
+    if exact:
+        found = exact          # narrow to the real ambiguity before listing
+
     if len(found) > 1:
         listing = "\n".join(f"    {name}  {c.chat_jid}" for c, name in found[:8])
-        raise ToolError(f"{len(found)} chats match {value!r} — pass one:\n{listing}")
+        same = len({(n or "").strip().lower() for _, n in found[:8]}) == 1
+        hint = ("These share the same name, so the number is the only thing "
+                "telling them apart — ASK which one is meant. Do not guess."
+                if same else
+                "Pass the exact name or the JID. If it is not obvious which is "
+                "meant, ask rather than guess.")
+        raise ToolError(f"{len(found)} chats match {value!r}:\n{listing}\n{hint}")
     return found[0][0].chat_jid
 
 
