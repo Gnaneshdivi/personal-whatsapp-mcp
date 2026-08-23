@@ -213,7 +213,7 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
 
     async def chats_api(request):
         q = request.query_params
-        from .search import find_chats, find_messages
+        from .search import find_chats, find_contacts, find_messages
         query = q.get("q") or ""
         found = await find_chats(
             rt, query=query, kind=q.get("filter") or "all",
@@ -224,7 +224,13 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
             out.append(d)
         # One query, two lists — the same shape WhatsApp answers with.
         messages = await find_messages(rt, query=query, limit=25) if query else []
-        return JSONResponse({"chats": out, "messages": messages})
+        # Three lists, like WhatsApp: who you talk to, who you could talk to,
+        # and where it was said.
+        contacts = [{"chat_jid": j, "name": n}
+                    for j, n in await find_contacts(rt, query=query, limit=15)] \
+            if query else []
+        return JSONResponse({"chats": out, "contacts": contacts,
+                             "messages": messages})
 
     async def messages_api(request):
         """A page of history, oldest-first for direct rendering.

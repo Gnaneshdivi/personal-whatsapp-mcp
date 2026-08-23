@@ -154,3 +154,58 @@ async def test_a_contact_is_not_listed_twice_when_it_also_has_a_chat(rt):
     await add(rt, "1@s.whatsapp.net", "Dad")
     rt.contacts._names = {"1@s.whatsapp.net": "Dad"}     # same person
     assert await _resolve_chat("Dad") == "1@s.whatsapp.net"
+
+
+# ------------------------------------------- masked placeholder names
+
+def test_a_masked_number_is_not_a_name():
+    """WhatsApp sends "+91∙∙∙∙∙∙∙∙88" as the name of a privacy-restricted chat."""
+    from wa_mcp.whatsapp.contacts import is_placeholder
+
+    assert is_placeholder("+91∙∙∙∙∙∙∙∙88")
+    assert is_placeholder("919812345678")      # a bare number is not a name either
+    assert is_placeholder("+91 98123 45678")
+    assert is_placeholder("") and is_placeholder(None)
+    assert not is_placeholder("Akbar Ktr Srm")
+
+
+def test_the_address_book_beats_a_masked_chat_name():
+    """The bug that sent a message to the wrong person.
+
+    display_name prefers an explicit chat name, so a stored placeholder beat
+    the real name sitting in the address book — the chat was unfindable by
+    name, and searching "akbar" returned only the other Akbar.
+    """
+    from wa_mcp.whatsapp.contacts import ContactBook
+
+    b = ContactBook("/nonexistent")
+    b._names = {"918056088288@s.whatsapp.net": "Akbar Ktr Srm"}
+    masked = "+91∙∙∙∙∙∙∙∙88"
+    assert b.display_name("918056088288@s.whatsapp.net",
+                          chat_name=masked) == "Akbar Ktr Srm"
+
+
+def test_a_masked_name_is_still_better_than_nothing():
+    """With no real name anywhere, showing the masked form beats a raw JID."""
+    from wa_mcp.whatsapp.contacts import ContactBook
+
+    b = ContactBook("/nonexistent")
+    masked = "+91∙∙∙∙∙∙∙∙88"
+    assert b.display_name("918056088288@s.whatsapp.net",
+                          chat_name=masked) == masked
+
+
+async def test_a_chat_named_only_by_a_mask_is_still_searchable(rt):
+    """It matches nothing in SQLite; the address book is what finds it."""
+    from wa_mcp.app import ToolError, _resolve_chat
+
+    await add(rt, "918056088288@s.whatsapp.net",
+              "+91∙∙∙∙∙∙∙∙88")
+    await add(rt, "919705179198@s.whatsapp.net", "Asif Akbar Brother")
+    rt.contacts._names = {"918056088288@s.whatsapp.net": "Akbar Ktr Srm"}
+
+    assert await _resolve_chat("Akbar Ktr Srm") == "918056088288@s.whatsapp.net"
+    # And the partial no longer silently picks the one that happened to match.
+    with pytest.raises(ToolError) as e:
+        await _resolve_chat("akbar")
+    assert "2 chats or contacts match" in str(e.value)

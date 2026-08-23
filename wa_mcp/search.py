@@ -19,24 +19,29 @@ async def find_chats(rt, *, query: str = "", kind: str = "all",
                      limit: int = 60, archived: bool = False) -> list:
     """Chats matching `query`, pinned first then newest.
 
-    Falls back to a resolved-name scan when the query finds nothing in the
-    database — names are persisted lazily, so a chat can be nameless in SQLite
-    for a moment after a contact refresh. Rare, and cheap to cover.
+    The database query is merged with a scan over resolved names, rather than
+    the scan being a fallback for when the query returns nothing. A chat whose
+    stored name is a masked number — 35 here — matches nothing in SQLite but is
+    perfectly findable once the address book supplies the real name, and it was
+    invisible whenever some other chat happened to match first. That is how
+    "akbar" found only "Asif Akbar Brother" and sent to the wrong person, while
+    "Akbar Ktr Srm" sat there stored as "+91∙∙∙∙∙∙∙∙88".
     """
     book = rt.contacts
     chats = await rt.store.list_chats(limit=limit, archived=archived,
                                       kind=kind, query=query or None)
-    if chats or not query:
-        return [(c, book.display_name(c.chat_jid, chat_name=c.name)) for c in chats]
+    out = [(c, book.display_name(c.chat_jid, chat_name=c.name)) for c in chats]
+    if not query:
+        return out
 
+    seen = {c.chat_jid for c, _ in out}
     pool = await rt.store.list_chats(limit=2000, archived=archived, kind=kind)
-    out = []
     for c in pool:
+        if c.chat_jid in seen or len(out) >= limit:
+            continue
         name = book.display_name(c.chat_jid, chat_name=c.name)
         if _matches(query, name, c.chat_jid):
             out.append((c, name))
-            if len(out) >= limit:
-                break
     return out
 
 
@@ -80,3 +85,30 @@ def _matches(needle: str, name: str, chat_jid: str) -> bool:
     if digits and digits in J.phone(chat_jid):
         return True
     return n in chat_jid.lower()
+
+
+async def find_contacts(rt, *, query: str, limit: int = 20) -> list[tuple[str, str]]:
+    """Address-book matches with no conversation yet, as (jid, name).
+
+    Searching chats alone answers "who have I talked to about this", which is
+    not the question someone asks when they type a name. Measured here: 8,518
+    contacts against 1,082 chats, so most of the address book was invisible —
+    "Akbar Ktr Srm" returned nothing while sitting in WhatsApp's own store.
+
+    Anyone who already has a chat is left out, since they are in that list
+    already and appearing twice reads as two different people.
+    """
+    if not (query or "").strip():
+        return []
+    from .whatsapp import jid as J
+
+    have = {J.normalise(c.chat_jid)
+            for c in await rt.store.list_chats(limit=5000)}
+    out = []
+    for jid, name in rt.contacts.search(query, limit=limit * 3):
+        if J.normalise(jid) in have:
+            continue
+        out.append((jid, name))
+        if len(out) >= limit:
+            break
+    return out

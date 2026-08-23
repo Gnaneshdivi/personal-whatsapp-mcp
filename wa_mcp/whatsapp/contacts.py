@@ -119,7 +119,10 @@ class ContactBook:
     def display_name(self, chat_jid: str, *, chat_name: str | None = None,
                      push_name: str | None = None) -> str:
         """The full fallback chain, in one place so every caller agrees."""
-        for candidate in (chat_name, self.get(chat_jid), push_name):
+        # A masked chat name is skipped so the address book gets its turn; it
+        # is still used as a last resort, below the real sources.
+        for candidate in (chat_name if not is_placeholder(chat_name) else None,
+                          self.get(chat_jid), push_name, chat_name):
             if candidate and candidate.strip():
                 return candidate.strip()
         phone = J.phone(chat_jid)
@@ -148,6 +151,24 @@ class ContactBook:
             return [tuple(r) for r in await conn.fetch(_SQL)]
         finally:
             await conn.close()
+
+
+# WhatsApp sends a masked number as the "name" of a chat with someone whose
+# contact card it will not share: "+91∙∙∙∙∙∙∙∙88". Stored, it is worse than no
+# name at all — display_name prefers an explicit chat name, so the placeholder
+# beat the real name sitting in the address book. 35 chats here, 18 of them
+# nameable, including the one that made "akbar" resolve to the wrong person.
+_MASK_CHARS = "\u2219\u2022\u00b7\u2027"
+
+
+def is_placeholder(name: str | None) -> bool:
+    """True for a masked number or a bare number standing in for a name."""
+    n = (name or "").strip()
+    if not n:
+        return True
+    if any(ch in n for ch in _MASK_CHARS):
+        return True
+    return n.lstrip("+").replace(" ", "").isdigit()
 
 
 def _first_nonempty(*values: str | None) -> str:
