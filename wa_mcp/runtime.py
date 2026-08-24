@@ -57,6 +57,7 @@ class Runtime:
         self.oauth = None         # set by create_app when OAuth is on
         self._subscribers: list = []
         self._have_history = False   # set in start(); see status()
+        self._summary_task = None
 
     # ------------------------------------------------------------- lifecycle
 
@@ -72,6 +73,10 @@ class Runtime:
         if settings.enabled:
             ok, why = settings.ready()
             log.info("auto-reply enabled" if ok else "auto-reply enabled but idle: %s", why)
+
+        from .trigger.summary import loop as summary_loop
+
+        self._summary_task = asyncio.create_task(summary_loop(self))
 
         from .whatsapp.client import WhatsApp
 
@@ -96,6 +101,15 @@ class Runtime:
             log.info("no number linked yet — open the web UI to pair")
 
     async def stop(self) -> None:
+        # Cancelled before the store closes, or its next tick reads a closed
+        # connection and logs an error on every shutdown.
+        if self._summary_task is not None:
+            self._summary_task.cancel()
+            try:
+                await self._summary_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._summary_task = None
         if self.wa is not None:
             await self.wa.stop()
         await self.store.close()

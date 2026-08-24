@@ -56,6 +56,9 @@ def enabled(**over) -> TriggerSettings:
         "enabled": True, "backend": "model",
         "model": {"base_url": "http://m", "model": "gpt", "api_key": "k"},
         "reply": {"personal": "all", "cooldown_seconds": 0, **over.pop("reply", {})},
+        # Off unless a test is about it: the disclosure is a separate message
+        # sent before the first reply, and it would shift every index here.
+        "disclosure": {"enabled": False},
         **over,
     })
     return s
@@ -260,6 +263,7 @@ async def test_webhook_backend_reads_a_nested_reply_path(rt):
         "enabled": True, "backend": "webhook",
         "webhook": {"url": "http://hook", "reply_path": "data.answer"},
         "reply": {"personal": "all", "cooldown_seconds": 0},
+        "disclosure": {"enabled": False},
     })
     eng._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     d = await eng.consider(inbound())

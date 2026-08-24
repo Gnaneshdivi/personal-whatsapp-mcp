@@ -222,6 +222,95 @@ class Notify:
 
 
 @dataclass
+class Disclosure:
+    """Telling someone they are talking to a bot, once per conversation.
+
+    Sent as its own message ahead of the first automated reply in a chat, not
+    prepended to it: a greeting welded onto an answer reads as boilerplate and
+    gets skimmed, and the disclosure is the part that must not be.
+
+    Once per chat, because repeating it every message is what makes people stop
+    reading it. Whether they were told is remembered in the store, so it
+    survives a restart rather than starting over each time the process does.
+    """
+
+    enabled: bool = True
+    message: str = (
+        "Hi — I'm an AI assistant answering on behalf of {{me_name}}. "
+        "I can help with most things right here. If it needs {{me_name}} "
+        "personally, I'll flag it so they can get back to you."
+    )
+
+
+@dataclass
+class ActiveHours:
+    """When replying is allowed at all.
+
+    An assistant answering at 3am on a personal number is not helpful, it is
+    conspicuous. Outside the window nothing is sent, and the message is still
+    recorded and still watched — this gates replying, not receiving.
+    """
+
+    enabled: bool = False
+    start: str = "09:00"
+    end: str = "21:00"
+    # IANA name. Kept explicit rather than read from the host, because the
+    # server may well not be in the same country as the phone.
+    timezone: str = "Asia/Kolkata"
+    # Optional single line sent instead of a real reply, once per chat per day,
+    # so someone writing at midnight is not met with silence.
+    after_hours_message: str = ""
+
+    def window(self) -> tuple[int, int]:
+        """start, end as minutes past midnight."""
+        def mins(v: str, fallback: int) -> int:
+            try:
+                h, m = (v or "").split(":")
+                return int(h) % 24 * 60 + int(m) % 60
+            except Exception:
+                return fallback
+        return mins(self.start, 0), mins(self.end, 24 * 60 - 1)
+
+    def open_at(self, when) -> bool:
+        """Whether replying is allowed at `when` (a datetime in `timezone`)."""
+        if not self.enabled:
+            return True
+        start, end = self.window()
+        now = when.hour * 60 + when.minute
+        if start == end:
+            return True
+        if start < end:
+            return start <= now < end
+        return now >= start or now < end        # a window over midnight
+
+
+@dataclass
+class Summary:
+    """Periodic digests, so nothing is missed without reading every chat.
+
+    The interval is what makes this useful rather than noise: every ten minutes
+    for a busy line, once a day for a quiet one. Nothing is sent when nothing
+    happened, because a digest that arrives saying "no activity" trains you to
+    ignore the ones that do not.
+    """
+
+    enabled: bool = False
+    every_minutes: int = 60
+    # Same vocabulary as alerts: off | me | chat | number.
+    route: str = "me"
+    jid: str = ""
+    # Things that must be called out if they appear. These are what the digest
+    # is FOR — the point is not to read everything, it is to not miss these.
+    important: list[str] = field(default_factory=list)
+    include_groups: bool = False
+    max_chats: int = 20
+
+    @property
+    def configured(self) -> bool:
+        return self.enabled and self.every_minutes > 0 and self.route != "off"
+
+
+@dataclass
 class ReplyScope:
     """Who gets replied to. Everything starts at none."""
 
@@ -247,6 +336,9 @@ class TriggerSettings:
     reply: ReplyScope = field(default_factory=ReplyScope)
     guardrails: Guardrails = field(default_factory=Guardrails)
     notify: Notify = field(default_factory=Notify)
+    disclosure: Disclosure = field(default_factory=Disclosure)
+    hours: ActiveHours = field(default_factory=ActiveHours)
+    summary: Summary = field(default_factory=Summary)
     # A reply carrying an image URL is downloaded and sent as a photo rather
     # than as a link. Off by default: it fetches whatever URL a model emits.
     send_media: bool = False
@@ -277,6 +369,9 @@ class TriggerSettings:
             reply=_build(ReplyScope, raw.get("reply")),
             guardrails=_build(Guardrails, raw.get("guardrails")),
             notify=_notify_from(raw.get("notify")),
+            disclosure=_build(Disclosure, raw.get("disclosure")),
+            hours=_build(ActiveHours, raw.get("hours")),
+            summary=_build(Summary, raw.get("summary")),
             # send_images was the name before this covered video,
             # audio and documents; still read so an existing saved
             # config keeps working across the upgrade.

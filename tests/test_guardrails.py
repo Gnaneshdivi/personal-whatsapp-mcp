@@ -51,6 +51,9 @@ def settings(**over) -> TriggerSettings:
         "enabled": True, "backend": "model",
         "model": {"base_url": "http://m", "model": "gpt"},
         "reply": {"personal": "all", "cooldown_seconds": 0},
+        # Off unless a test is about it: these assert on the reply, and the
+        # disclosure is a separate message that would shift every index.
+        "disclosure": {"enabled": False},
     }
     base.update(over)
     return TriggerSettings.from_dict(base)

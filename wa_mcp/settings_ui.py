@@ -456,6 +456,79 @@ def build(rt, q: str, status: dict) -> str:
               "trusted to be small.")
     ), when="enabled")
 
+    # --- disclosure ------------------------------------------------------
+    d = t.disclosure
+    disclosure = section("Say it is a bot", (
+        row("Introduce itself", toggle("disclosure.enabled", d.enabled),
+            "Sends the line below once per conversation, just before the first "
+            "automated reply.\n\nOn by default, and worth leaving on: the "
+            "person is talking to software on your number, and finding that "
+            "out later is the thing that damages trust.")
+        + row("What it says", area("disclosure.message", d.message, rows=3),
+              TOKEN_HELP + "\n\nSent as its own message, not glued to the "
+              "answer — welded on, it reads as boilerplate and gets skimmed.",
+              wide=True, when="disclosure.enabled")
+    ), when="enabled")
+
+    # --- hours -----------------------------------------------------------
+    h = t.hours
+    hours = section("When it may reply", (
+        row("Only reply between set hours", toggle("hours.enabled", h.enabled),
+            "Outside the window nothing is sent. Messages still arrive, are "
+            "still stored, and watch rules still fire — this stops it "
+            "answering, not listening.")
+        + row("From", text_in("hours.start", h.start, "09:00"),
+              "24-hour clock. A window that ends before it starts runs "
+              "overnight, so 22:00 to 06:00 works.", when="hours.enabled")
+        + row("Until", text_in("hours.end", h.end, "21:00"), "",
+              when="hours.enabled")
+        + row("Timezone", text_in("hours.timezone", h.timezone, "Asia/Kolkata"),
+              "An IANA name. Set explicitly because this server may not be in "
+              "the same country as your phone, and 9pm has to mean your 9pm.",
+              when="hours.enabled")
+        + row("Out-of-hours reply", text_in("hours.after_hours_message",
+                                            h.after_hours_message,
+                                            "Thanks — I'll reply in the morning."),
+              "Optional. Left blank, someone writing at midnight simply gets "
+              "no answer until the window opens.", wide=True,
+              when="hours.enabled")
+    ), when="enabled")
+
+    # --- summary ---------------------------------------------------------
+    sm = t.summary
+    summary = section("Summaries", (
+        row("Send me summaries", toggle("summary.enabled", sm.enabled),
+            "A periodic digest of what came in, so you can not read every "
+            "chat and still not miss anything.\n\nNothing is sent when "
+            "nothing happened — a digest that says \"no activity\" teaches "
+            "you to ignore the ones that matter.")
+        + row("How often (minutes)", num_in("summary.every_minutes",
+                                            sm.every_minutes),
+              "10 for a busy line, 60 for most, 1440 for once a day. Changing "
+              "it takes effect immediately, not after the old interval ends.",
+              when="summary.enabled")
+        + row("Send them to", select("summary.route", sm.route,
+                                     [("me", "My own number"),
+                                      ("number", "Another number"),
+                                      ("off", "Nowhere — off")]),
+              "", when="summary.enabled")
+        + row("Which number", text_in("summary.jid", sm.jid, "919812345678"),
+              "With the country code and no +.", when="summary.route=number")
+        + row("Always call out", csv_in("summary.important", sm.important,
+                                        "payment, cancel, urgent, interview"),
+              "Comma separated. These are the point of the digest — anything "
+              "matching is named first and explicitly, because missing one is "
+              "the only real failure a summary can have.", wide=True,
+              when="summary.enabled")
+        + row("Include groups", toggle("summary.include_groups",
+                                       sm.include_groups),
+              "Off by default. Groups are where most of the volume is and "
+              "least of the things needing you.", when="summary.enabled")
+        + row("Most chats per summary", num_in("summary.max_chats", sm.max_chats),
+              "A ceiling, so a busy hour produces a digest you will still "
+              "read.", when="summary.enabled")
+    ))
+
     # --- notify ----------------------------------------------------------
     n = t.notify
     notify = section("Tell me when", (
@@ -501,7 +574,7 @@ def build(rt, q: str, status: dict) -> str:
 
     body = (f'<div class="wrap"><a href="/{q}">&larr; Back to chats</a>'
             f'<h1>Settings {state}</h1>'
-            f'<form id="f">{backend}{model}{webhook}{guards}{fallback}{scope}{media}{notify}</form>'
+            f'<form id="f">{backend}{model}{webhook}{disclosure}{hours}{guards}{fallback}{scope}{media}{summary}{notify}</form>'
             f'</div>'
             f'<div class="bar"><button type="button" id="save">Save</button>'
             f'<div id="out"></div></div>'

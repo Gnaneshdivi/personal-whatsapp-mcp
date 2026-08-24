@@ -52,6 +52,22 @@ class Inbound:
     mentioned_me: bool = False
 
 
+def now_in(tz_name: str):
+    """Local time in `tz_name`, falling back to the host clock.
+
+    Explicit rather than the host's zone: this may well run on a server in a
+    different country from the phone, and "9pm" has to mean the owner's 9pm.
+    """
+    from datetime import datetime
+
+    try:
+        from zoneinfo import ZoneInfo
+
+        return datetime.now(ZoneInfo(tz_name))
+    except Exception:
+        return datetime.now()
+
+
 class TriggerEngine:
     def __init__(self, runtime, http=None):
         self.rt = runtime
@@ -105,6 +121,11 @@ class TriggerEngine:
         if self.rt.wa is None or not self.rt.wa.sync.state.ready:
             return "still syncing — replies are held until history finishes"
 
+        # Gates replying, not receiving: the message is stored and the watch
+        # rules still run, so nothing is lost by being out of hours.
+        if not s.hours.open_at(now_in(s.hours.timezone)):
+            return f"outside active hours ({s.hours.start}–{s.hours.end})"
+
         blocked = s.guardrails.blocked_reason(msg.text)
         if blocked:
             return f"guardrail: {blocked}"
@@ -145,6 +166,8 @@ class TriggerEngine:
 
         why = self._why_not(msg)
         if why:
+            if why.startswith("outside active hours"):
+                await self._after_hours(msg)
             if why.startswith("guardrail:"):
                 d = await self._refuse(msg, why)
                 return d if not watched else self._touch(d, watched)
@@ -213,6 +236,11 @@ class TriggerEngine:
         chat = J.normalise(msg.chat_jid)
         self._cooldown[chat] = time.monotonic()
         self._recent_hour.append(time.monotonic())
+
+        # Told once, ahead of the first automated reply in this conversation.
+        # Its own message rather than a prefix: welded onto an answer it reads
+        # as boilerplate and gets skimmed, and this is the part that must not.
+        await self._disclose(msg, ctx)
 
         sent_media = 0
         try:
@@ -307,6 +335,54 @@ class TriggerEngine:
         if self.settings.notify.on_blocked:
             notified = await self._notify(msg, reason)
         return self._record(Decision(False, reason, notified=notified))
+
+    async def _after_hours(self, msg: Inbound) -> bool:
+        """One line so a late message is not met with silence.
+
+        Once per chat per day: a standing "we are closed" on every message all
+        night is worse than saying nothing, and the point is to set an
+        expectation, not to keep restating it.
+        """
+        text = (self.settings.hours.after_hours_message or "").strip()
+        if not text:
+            return False
+        chat = J.normalise(msg.chat_jid)
+        day = now_in(self.settings.hours.timezone).strftime("%Y-%m-%d")
+        key = f"afterhours.{chat}.{day}"
+        if await self.rt.store.get_kv(key):
+            return False
+        try:
+            sent = await self.rt.wa.send_text(chat, text)
+            if sent.get("message_id"):
+                self.note_generated(sent["message_id"])
+            await self.rt.store.put_kv(key, {"at": time.time()})
+            return True
+        except Exception as exc:
+            log.warning("after-hours note to %s failed: %s", chat, exc)
+            return False
+
+    async def _disclose(self, msg: Inbound, ctx) -> bool:
+        """Send the "you are talking to a bot" line, once per chat."""
+        d = self.settings.disclosure
+        if not d.enabled or not (d.message or "").strip():
+            return False
+        chat = J.normalise(msg.chat_jid)
+        key = f"disclosed.{chat}"
+        # Remembered in the store, so a restart does not start the whole thing
+        # over and announce itself again to everyone.
+        if await self.rt.store.get_kv(key):
+            return False
+        try:
+            sent = await self.rt.wa.send_text(chat, render(d.message, ctx))
+            if sent.get("message_id"):
+                self.note_generated(sent["message_id"])
+            await self.rt.store.put_kv(key, {"at": time.time()})
+            return True
+        except Exception as exc:
+            # A failed disclosure must not cost the reply, but it must not be
+            # recorded as done either — better to say it twice than never.
+            log.warning("disclosure to %s failed: %s", chat, exc)
+            return False
 
     async def _notify(self, msg: Inbound, reason: str) -> str | None:
         """Tell a human, wherever `route` says to.
