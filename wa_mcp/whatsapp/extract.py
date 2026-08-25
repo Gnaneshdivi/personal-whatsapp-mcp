@@ -264,19 +264,6 @@ def media_descriptor(message: Any) -> dict | None:
     return None
 
 
-def reaction_target(message: Any) -> tuple[str, str] | None:
-    """For a reaction, returns (target_message_id, emoji)."""
-    inner = unwrap(message)
-    if _has(inner, "reactionMessage") and inner.HasField("reactionMessage"):
-        r = inner.reactionMessage
-        target = r.key.ID if r.HasField("key") else ""
-        return target, r.text or ""
-    return None
-
-
-# --------------------------------------------------------------------- helpers
-
-
 def _has(message: Any, field: str) -> bool:
     """Does this protobuf build actually declare the field?
 

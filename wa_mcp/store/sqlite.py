@@ -22,7 +22,7 @@ from typing import Any
 
 import aiosqlite
 
-from .base import Chat, Message, Store, now_ms, split_query, status_rank
+from .base import Chat, Message, Store, split_query, status_rank
 
 log = logging.getLogger(__name__)
 
@@ -351,7 +351,7 @@ class SQLiteStore(Store):
             return []
         query = " ".join(include) + ("".join(f" NOT {e}" for e in exclude))
 
-        sql = (f"SELECT m.message_id, m.chat_jid, m.sender_jid, m.sender_name, "
+        sql = ("SELECT m.message_id, m.chat_jid, m.sender_jid, m.sender_name, "
                "m.is_from_me, m.ts, m.type, m.text, m.media_ref, m.media_meta, "
                "m.quoted_id, m.edited_at, m.revoked_at "
                "FROM messages_fts f JOIN messages m ON m.id = f.rowid "

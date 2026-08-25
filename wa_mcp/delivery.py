@@ -172,12 +172,13 @@ class Scope:
         auth = headers.get("authorization", "")
         token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
         record = await load(self.rt.store, token) if token else None
-        # Who is calling /mcp and as what. A connector that cannot see the
-        # tools looks identical to one that never connected, and without this
-        # there is nothing in the log either way.
-        log.info("mcp call: subject=%s scoped=%s",
-                 (record or {}).get("subject", "unknown-or-rejected"),
-                 bool(record and (record.get("delivery_chat") or record.get("routine"))))
+        # Debug, not info: a routine run makes ~18 calls, and at info that
+        # buries everything else. A connector that cannot see the tools looks
+        # identical to one that never connected, so the line earns its place —
+        # just not on every request. Refusals below are logged loudly.
+        log.debug("mcp call: subject=%s scoped=%s",
+                  (record or {}).get("subject", "unknown-or-rejected"),
+                  bool(record and (record.get("delivery_chat") or record.get("routine"))))
         if not record or not (record.get("delivery_chat") or record.get("routine")):
             return await self.app(scope, receive, send)   # full token, or none
 
@@ -194,6 +195,10 @@ class Scope:
 
         why = await self._check(body, record)
         if why:
+            # The actionable case: something asked for more than it may have.
+            # Either a misconfigured routine or an injection that got through
+            # to the tool call, and both are worth seeing without debug on.
+            log.warning("refused %s: %s", record.get("subject", "?"), why)
             return await _error(send, why)
 
         sent = False

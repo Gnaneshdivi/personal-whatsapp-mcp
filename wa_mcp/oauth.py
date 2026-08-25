@@ -35,7 +35,6 @@ import hashlib
 import logging
 import secrets
 import time
-from typing import Any
 
 from mcp.server.auth.provider import (AccessToken, AuthorizationCode,
                                       AuthorizationParams, RefreshToken)

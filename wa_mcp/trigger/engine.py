@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from ..whatsapp import jid as J
 from .backends import (BackendError, Context, extract_media, fetch_media,

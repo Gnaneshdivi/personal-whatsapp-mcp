@@ -1,6 +1,6 @@
 """The single process: storage, socket and settings, wired together once.
 
-Everything that used to be spread across a worker, a gateway and an MCP replica
+Everything that a multi-process design would spread across a worker and a gateway
 lives here. There is one of these per process and it is created at startup, so
 nothing below ever has to ask "is the client up yet" — it either is, or the
 phase says why not.

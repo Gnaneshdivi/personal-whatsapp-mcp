@@ -285,7 +285,7 @@ async def wa_unread(chat: str = "") -> dict[str, Any]:
 
 @mcp.tool
 async def wa_send(to: str, text: str, reply_to: str = "",
-                   reply_token: str = "") -> dict[str, Any]:
+                  reply_token: str = "") -> dict[str, Any]:
     """Send a text message.
 
     Naming a person or a number: ALWAYS resolve it before sending. Pass the
@@ -299,6 +299,10 @@ async def wa_send(to: str, text: str, reply_to: str = "",
 
     `to` takes a JID, an international phone number (spaces and dashes are
     fine), or a contact name. `reply_to` quotes an existing message id.
+
+    `reply_token` is not read here — the delivery gate in front of /mcp checks
+    it before the call arrives. A routine's token authorises nothing without
+    one, so the parameter has to exist for the call to be accepted at all.
     """
     try:
         jid = await _resolve_chat(to)
@@ -310,7 +314,7 @@ async def wa_send(to: str, text: str, reply_to: str = "",
 @mcp.tool
 async def wa_send_media(to: str, media_base64: str, kind: str = "image",
                         caption: str = "", filename: str = "",
-                   reply_token: str = "") -> dict[str, Any]:
+                        reply_token: str = "") -> dict[str, Any]:
     """Send an image, video, audio, document or sticker.
 
     `media_base64` is the raw file bytes, base64-encoded.
@@ -349,7 +353,7 @@ async def wa_mark_read(chat: str, up_to_message_id: str = "") -> dict[str, Any]:
 
 @mcp.tool
 async def wa_typing(chat: str, typing: bool = True,
-                   reply_token: str = "") -> dict[str, Any]:
+                    reply_token: str = "") -> dict[str, Any]:
     """Show or clear the typing indicator in a chat.
 
     Worth doing before a slow reply — it is what makes an automated response

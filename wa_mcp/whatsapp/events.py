@@ -1,7 +1,7 @@
 """Event registry and the canonical webhook envelope.
 
 Deliberately imports nothing from neonize: the MCP web tier installs the core
-package without the worker extra, and must still be able to parse envelopes and
+package without neonize installed, and must still be able to parse envelopes and
 reason about event types. Events are keyed by class NAME (a string), so this module
 stays importable with no compiled Go binary present.
 
@@ -84,32 +84,11 @@ EVENT_TYPES: dict[str, str] = {
     "OfflineSyncCompletedEv": "sync.offline_completed",
 }
 
-# Every event we subscribe to. "Subscribe all, forward all" — the worker does not
+# Every event we subscribe to. Subscribe to everything: deciding what matters is
 # decide what matters; the trigger service does. Broad subscription is what lets
-# automations fire on receipts, reactions, calls and group joins later without
-# touching the worker again.
+# cheap here and impossible to add later without re-pairing, so watch rules and
+# automations can grow without touching this layer again.
 SUBSCRIBED = tuple(EVENT_TYPES.keys())
-
-# Events that change local state (wa_* rows, Redis) in ADDITION to being forwarded.
-# Everything else in SUBSCRIBED is forwarded only.
-#
-# Keep this in sync with WhatsAppClient._dispatch — the tests assert they match, so
-# a handler added without updating this list (or vice versa) fails loudly instead of
-# leaving a constant that quietly describes behaviour the code does not have.
-STATEFUL = frozenset({
-    "MessageEv",        # -> wa_messages, wa_chats
-    "ReceiptEv",        # -> RETRY resend
-    "GroupInfoEv",      # -> wa_chats.name
-    "JoinedGroupEv",    # -> wa_chats.name
-    "ConnectedEv",      # -> runtime_state, wa:liveness
-    "DisconnectedEv",   # -> runtime_state
-    "LoggedOutEv",      # -> status, lock release
-    "StreamReplacedEv", # -> status, lock release
-    "TemporaryBanEv",   # -> status=banned, lock release
-    "QREv",             # -> wa:pair
-    "PairStatusEv",     # -> wa_connections row, promotion
-})
-
 # Must never be swallowed. A ban that only shows up in a log is a ban nobody acts on.
 CRITICAL = frozenset({"TemporaryBanEv", "LoggedOutEv", "StreamReplacedEv", "ClientOutdatedEv"})
 
@@ -185,18 +164,3 @@ def event_type_for(class_name: str) -> str:
 
 
 _EVENT_NS = uuid.UUID("6f9619ff-8b86-d011-b42d-00c04fc964ff")
-
-
-def deterministic_event_id(connection_id: str, message_id: str, event_type: str) -> str:
-    """Stable event_id for anything keyed to a message.
-
-    WhatsApp redelivers: the same MessageEv arrives from offline sync AND live
-    delivery. Observed in live traffic — one inbound message produced two envelopes
-    with different random ids. The wa_messages unique index stopped a duplicate row,
-    but the trigger service would still have seen the event twice and acted twice.
-
-    Deriving the id from (connection, message, event_type) makes the redelivery
-    collapse onto the existing wa_webhook_deliveries row via uq_wa_delivery_event_url,
-    so duplicate suppression costs nothing extra.
-    """
-    return str(uuid.uuid5(_EVENT_NS, f"{connection_id}:{message_id}:{event_type}"))

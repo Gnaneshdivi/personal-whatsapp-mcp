@@ -173,7 +173,6 @@ async def test_saving_during_a_sync_says_why_it_is_not_replying(client):
     the sync gate. Only the first carried a reason, so a valid config saved
     while history was still arriving reported a blank one.
     """
-    from wa_mcp.app import RT
 
     live = dict(FULL, enabled=True, backend="model")
     live["model"] = dict(FULL["model"], api_key="sk-live")

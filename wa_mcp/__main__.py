@@ -50,7 +50,27 @@ def _banner(settings: Settings, storage, token: str) -> str:
     return "\n".join(lines)
 
 
+def _load_dotenv() -> str | None:
+    """Read .env from the working directory, if there is one.
+
+    Configuration is a dozen environment variables, and on a server they have
+    to live somewhere. A file next to the process is the least surprising
+    place, and it means `docker run --env-file` and a bare `python -m wa_mcp`
+    are configured the same way. Real environment variables always win, so a
+    stale .env cannot override what the platform set.
+    """
+    try:
+        from dotenv import find_dotenv, load_dotenv
+    except ImportError:          # optional at runtime; only the file is lost
+        return None
+    path = find_dotenv(usecwd=True)
+    if path:
+        load_dotenv(path, override=False)
+    return path or None
+
+
 def main(argv: list[str] | None = None) -> int:
+    env_file = _load_dotenv()
     p = argparse.ArgumentParser(
         prog="suprai-whatsapp-mcp",
         description="WhatsApp for any LLM — MCP server, web UI and auto-reply.",
@@ -89,6 +109,9 @@ def main(argv: list[str] | None = None) -> int:
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
     )
+    # After basicConfig, or the line goes nowhere.
+    if env_file:
+        logging.getLogger("wa_mcp").info("configuration read from %s", env_file)
 
     try:
         storage = resolve_storage()

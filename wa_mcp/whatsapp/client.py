@@ -28,7 +28,7 @@ import logging
 import time
 from typing import Any, Awaitable, Callable
 
-from ..errors import LoggedOut, NotConnected, RateLimited, SendFailed
+from ..errors import NotConnected, RateLimited, SendFailed
 from ..store.base import Message, to_ms
 from . import extract
 from . import jid as J
@@ -440,7 +440,7 @@ class WhatsApp:
             pinned=bool(getattr(conv, "pinned", 0)),
         )
 
-        newest_ts, newest_preview, newest_from_me = 0, None, False
+        newest_ts, newest_preview = 0, None
         count = 0
         for item in list(getattr(conv, "messages", None) or []):
             info = getattr(item, "message", None)
@@ -484,7 +484,7 @@ class WhatsApp:
             )):
                 count += 1
             if ts > newest_ts:
-                newest_ts, newest_from_me = ts, from_me
+                newest_ts = ts
                 newest_preview = text or (f"[{msg_type}]" if msg_type != "text" else None)
 
         # One rollup per conversation rather than per message: touch_chat
