@@ -893,7 +893,7 @@ class WhatsApp:
             resp = await fn(jid, raw, **kwargs) if kwargs else await fn(jid, raw)
         except Exception as exc:
             raise SendFailed(str(exc)) from exc
-        return await self._record(jid, resp, caption or "", kind)
+        return await self._record(jid, resp, caption or "", kind, blob=raw)
 
     async def react(self, chat_jid: str, message_id: str, emoji: str) -> dict:
         self._guard()
@@ -1060,23 +1060,81 @@ class WhatsApp:
         body.ParseFromString(row.raw_proto)
         return await self._client.download_any(body)
 
-    async def _record(self, jid, resp, text: str, kind: str) -> dict:
+    async def _record(self, jid, resp, text: str, kind: str,
+                      blob: bytes | None = None) -> dict:
         """Persist our own send.
 
         WhatsApp does not echo a device's own messages back to that device, so
         without this the model reads a conversation containing only one side.
+
+        For media, the bytes we just uploaded are cached here under the message
+        id. The download path decrypts an incoming attachment from its stored
+        protobuf, and a send has no such protobuf — so without this our own
+        images were rows the media route answered 404 for, and the conversation
+        showed a caption with nothing above it.
         """
         message_id = getattr(resp, "ID", "") or ""
         ts = to_ms(getattr(resp, "Timestamp", 0))
         chat = J.from_obj(jid)
         if message_id:
+            meta: dict[str, Any] = {}
+            ref = None
+            if blob:
+                meta = {"kind": kind, "mimetype": _sniff_mime(blob, kind),
+                        "file_length": len(blob)}
+                ref = self._cache_outgoing(message_id, blob)
             await self.store.upsert_message(Message(
                 message_id=message_id, chat_jid=chat, sender_jid=self.self_jid,
                 is_from_me=True, ts=ts, type=kind, text=text or None,
+                media_meta=meta, media_ref=ref,
             ))
             await self.store.touch_chat(chat, ts, True, text or f"[{kind}]")
         return {"message_id": message_id, "to": chat, "type": kind,
                 "text": text, "status": "sent"}
+
+    def _cache_outgoing(self, message_id: str, blob: bytes) -> str | None:
+        """Put our own attachment where the media route looks for it."""
+        try:
+            from ..config import data_dir
+            cache = data_dir() / "media"
+            cache.mkdir(parents=True, exist_ok=True)
+            path = cache / message_id.replace("/", "_")
+            path.write_bytes(blob)
+            return str(path)
+        except OSError as exc:
+            # A full or read-only disk must not fail a message that WhatsApp
+            # has already accepted.
+            log.warning("could not cache sent media %s: %s", message_id, exc)
+            return None
+
+
+_MAGIC = (
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"GIF8", "image/gif"),
+    (b"RIFF", "image/webp"),          # also wav; the kind below disambiguates
+    (b"%PDF-", "application/pdf"),
+    (b"OggS", "audio/ogg"),
+    (b"ID3", "audio/mpeg"),
+)
+_BY_KIND = {"image": "image/jpeg", "video": "video/mp4", "audio": "audio/ogg",
+            "sticker": "image/webp", "document": "application/octet-stream"}
+
+
+def _sniff_mime(blob: bytes, kind: str) -> str:
+    """Content type for something we are sending.
+
+    The caller says "image"; the browser needs to know which. Guessing from the
+    kind alone renders a PNG as a broken JPEG in some viewers, and the first
+    few bytes settle it without a dependency.
+    """
+    head = blob[:16]
+    for magic, mime in _MAGIC:
+        if head.startswith(magic):
+            if magic == b"RIFF":
+                return "image/webp" if blob[8:12] == b"WEBP" else "audio/wav"
+            return mime
+    return _BY_KIND.get(kind, "application/octet-stream")
 
 
 def _enum_name(message, field: str) -> str:

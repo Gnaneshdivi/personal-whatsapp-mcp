@@ -247,7 +247,15 @@ def edited_payload(message: Any) -> tuple[str, str] | None:
 
 
 def media_descriptor(message: Any) -> dict | None:
-    """Everything needed to download and store the attachment, or None."""
+    """Everything needed to download and store the attachment, or None.
+
+    Every value here must survive `json.dumps` — this dict is stored as JSON.
+    It used to carry `fileSHA256` as raw protobuf bytes, which nothing read and
+    which raised inside the INSERT: on the live path that dropped the message,
+    and on the history path it aborted the rest of the conversation. The result
+    was zero images, videos, audio or documents stored, ever, out of 6,354
+    messages, with the only trace a per-conversation traceback during sync.
+    """
     inner = unwrap(message)
     for field in MEDIA_FIELDS:
         if _has(inner, field) and inner.HasField(field):
@@ -258,7 +266,6 @@ def media_descriptor(message: Any) -> dict | None:
                 "mimetype": getattr(media, "mimetype", "") or "",
                 "file_length": int(getattr(media, "fileLength", 0) or 0),
                 "file_name": getattr(media, "fileName", "") or "",
-                "sha256": bytes(getattr(media, "fileSHA256", b"") or b""),
                 "seconds": int(getattr(media, "seconds", 0) or 0),
             }
     return None

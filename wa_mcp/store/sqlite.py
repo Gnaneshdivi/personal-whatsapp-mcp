@@ -26,6 +26,23 @@ from .base import Chat, Message, Store, split_query, status_rank
 
 log = logging.getLogger(__name__)
 
+def _json_meta(meta: dict | None) -> str | None:
+    """Serialise media metadata without ever aborting the write.
+
+    A dict assembled from a protobuf can pick up a value json cannot encode —
+    bytes, most often. Losing the metadata for one attachment is a blemish;
+    raising here loses the message, and on the history path every message after
+    it in that conversation, which is how 6,354 messages arrived with zero
+    attachments among them. Anything unencodable is stringified instead.
+    """
+    if not meta:
+        return None
+    try:
+        return json.dumps(meta)
+    except (TypeError, ValueError):
+        return json.dumps(meta, default=repr)
+
+
 SCHEMA = """
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous  = NORMAL;
@@ -192,7 +209,7 @@ class SQLiteStore(Store):
             (
                 m.message_id, m.chat_jid, m.sender_jid, m.sender_name,
                 int(m.is_from_me), m.ts, m.type, m.text, m.media_ref,
-                json.dumps(m.media_meta) if m.media_meta else None,
+                _json_meta(m.media_meta),
                 m.quoted_id, m.edited_at, m.revoked_at, m.status, m.status_at,
                 m.raw_proto,
             ),

@@ -397,7 +397,7 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
 
         cache = data_dir() / "media"
         cache.mkdir(parents=True, exist_ok=True)
-        kind = (row.media_meta or {}).get("mime_type", "application/octet-stream")
+        kind = (row.media_meta or {}).get("mimetype") or "application/octet-stream"
         path = cache / mid.replace("/", "_")
 
         if not path.exists():

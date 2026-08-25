@@ -528,3 +528,83 @@ async def test_a_push_name_becomes_the_chat_name_when_there_is_none(store):
     # And it is findable by that name, which is the point.
     found = await store.list_chats(limit=10, query="asif")
     assert [c.chat_jid for c in found] == ["1@s.whatsapp.net"]
+
+
+async def test_an_unserialisable_media_value_does_not_lose_the_message(store):
+    """Losing the metadata for one attachment is a blemish. Raising inside the
+    INSERT loses the message — and on the history path, every message after it
+    in that conversation. That is how 6,354 messages arrived with zero
+    attachments among them."""
+    from wa_mcp.store.base import Message
+
+    ok = await store.upsert_message(Message(
+        message_id="m1", chat_jid="1@s.whatsapp.net", sender_jid="1@s.whatsapp.net",
+        is_from_me=False, ts=1000, type="image", text="",
+        media_meta={"kind": "image", "sha256": b"\x00\xff raw bytes"},
+    ))
+    assert ok
+    row = await store.get_message("m1")
+    assert row is not None and row.type == "image"
+    assert row.media_meta["kind"] == "image"
+
+
+async def test_media_metadata_survives_a_round_trip(store):
+    from wa_mcp.store.base import Message
+
+    meta = {"kind": "image", "mimetype": "image/jpeg", "file_length": 4096,
+            "file_name": "a.jpg", "seconds": 0}
+    await store.upsert_message(Message(
+        message_id="m2", chat_jid="1@s.whatsapp.net", sender_jid="1@s.whatsapp.net",
+        is_from_me=False, ts=1000, type="image", media_meta=meta,
+    ))
+    assert (await store.get_message("m2")).media_meta == meta
+
+
+async def test_our_own_media_is_recorded_so_the_web_can_serve_it(store, tmp_path,
+                                                                monkeypatch):
+    """The download path decrypts an incoming attachment from its protobuf, and
+    a send has no protobuf — so our own images were rows the media route
+    answered 404 for, and the chat showed a caption with nothing above it."""
+    from wa_mcp.whatsapp.client import WhatsApp
+    from wa_mcp.config import Settings
+
+    monkeypatch.setattr("wa_mcp.config.data_dir", lambda: tmp_path)
+    wa = WhatsApp(session_dsn=str(tmp_path / "s.db"), store=store, settings=Settings())
+    wa.self_jid = "me@s.whatsapp.net"
+
+    class Resp:
+        ID = "OUT1"
+        Timestamp = 1_700_000_000
+
+    class Jid:
+        User, Server = "1", "s.whatsapp.net"
+
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+    await wa._record(Jid(), Resp(), "a caption", "image", blob=png)
+
+    row = await store.get_message("OUT1")
+    assert row is not None and row.type == "image"
+    assert row.media_meta["mimetype"] == "image/png"
+    assert row.media_meta["file_length"] == len(png)
+    # and the bytes are where the media route looks
+    from pathlib import Path
+    assert Path(row.media_ref).read_bytes() == png
+
+
+async def test_a_plain_text_send_records_no_media(store, tmp_path, monkeypatch):
+    from wa_mcp.whatsapp.client import WhatsApp
+    from wa_mcp.config import Settings
+
+    monkeypatch.setattr("wa_mcp.config.data_dir", lambda: tmp_path)
+    wa = WhatsApp(session_dsn=str(tmp_path / "s.db"), store=store, settings=Settings())
+    wa.self_jid = "me@s.whatsapp.net"
+
+    class Resp:
+        ID, Timestamp = "OUT2", 1_700_000_000
+
+    class Jid:
+        User, Server = "1", "s.whatsapp.net"
+
+    await wa._record(Jid(), Resp(), "hello", "text")
+    row = await store.get_message("OUT2")
+    assert row.media_meta == {} and row.media_ref is None
