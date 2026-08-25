@@ -44,6 +44,11 @@ and send on your WhatsApp account.
 Open the URL it prints, then **WhatsApp → Settings → Linked Devices → Link a
 device**, and scan.
 
+You only need that long URL once. The first page load trades the `?k=` token
+for a session cookie and redirects to the bare address, so from then on
+`https://your-host/` is enough — and the credential stops appearing in browser
+history and proxy logs. The cookie is HttpOnly and lasts 30 days.
+
 ### Then wait
 
 History sync is not instant, and it matters more than it looks:

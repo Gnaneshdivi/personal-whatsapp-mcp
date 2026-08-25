@@ -352,6 +352,26 @@ class TriggerSettings:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+    def merged_with(self, raw: dict[str, Any] | None) -> "TriggerSettings":
+        """This config with `raw` laid over it, key by key.
+
+        from_dict defaults whatever is absent, so {"enabled": false} through it
+        does not switch replies off — it clears the model, the allowlist and
+        the alert route as well. That is right for the settings form, which
+        always posts every field, and wrong for anything sending a fragment.
+        """
+        base = self.to_dict()
+
+        def overlay(dst: dict, src: dict) -> dict:
+            for k, v in (src or {}).items():
+                if isinstance(v, dict) and isinstance(dst.get(k), dict):
+                    dst[k] = overlay(dict(dst[k]), v)
+                else:
+                    dst[k] = v
+            return dst
+
+        return TriggerSettings.from_dict(overlay(base, raw or {}))
+
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> "TriggerSettings":
         """Tolerant of missing and unknown keys.

@@ -192,3 +192,52 @@ async def test_an_unusable_config_still_names_the_missing_piece(client):
                                                          backend="webhook",
                                                          webhook={"url": ""}))
     assert "webhook url" in r.json()["blocked_by"]
+
+
+async def test_settings_can_be_changed_from_mcp_a_fragment_at_a_time(client):
+    from test_app import rpc
+
+    """wa_set_reply_settings said a partial object was safe. It was not.
+
+    from_dict defaults whatever is absent, so {"enabled": false} through it
+    cleared the model, the allowlist and the alert route as well — an agent
+    switching replies off would silently destroy the configuration.
+    """
+    from wa_mcp.app import RT
+
+    await client.post(f"/api/settings{K}", json=dict(
+        FULL, enabled=True,
+        model=dict(FULL["model"], api_key="sk-live", model="m1"),
+        reply=dict(FULL["reply"], personal="allowlist", cooldown_seconds=45)))
+
+    out = await rpc(client, "tools/call", {
+        "name": "wa_set_reply_settings",
+        "arguments": {"settings_json": '{"enabled": false}'}})
+    assert out["result"]["structuredContent"]["ok"] is True
+
+    s = RT.trigger.settings
+    assert s.enabled is False              # what was asked for
+    assert s.model.model == "m1"           # and nothing else
+    assert s.model.api_key == "sk-live"
+    assert s.reply.personal == "allowlist"
+    assert s.reply.cooldown_seconds == 45
+
+
+async def test_a_nested_fragment_merges_too(client):
+    from test_app import rpc
+
+    from wa_mcp.app import RT
+
+    await client.post(f"/api/settings{K}", json=dict(
+        FULL, reply=dict(FULL["reply"], personal="allowlist",
+                         personal_allowlist=["1@s.whatsapp.net"],
+                         cooldown_seconds=45)))
+
+    await rpc(client, "tools/call", {
+        "name": "wa_set_reply_settings",
+        "arguments": {"settings_json": '{"reply": {"personal": "all"}}'}})
+
+    s = RT.trigger.settings
+    assert s.reply.personal == "all"
+    assert s.reply.personal_allowlist == ["1@s.whatsapp.net"]
+    assert s.reply.cooldown_seconds == 45

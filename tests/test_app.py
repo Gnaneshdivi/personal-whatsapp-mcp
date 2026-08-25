@@ -307,3 +307,53 @@ async def test_registration_requires_refresh_token_grant(client):
         "token_endpoint_auth_method": "none"})
     assert r.status_code == 400
     assert "refresh_token" in r.text
+
+
+# ------------------------------------------------------- the session cookie
+
+async def test_a_browser_trades_the_url_token_for_a_cookie(noauth_client):
+    """The URL nobody can remember gets pasted into a notes app.
+
+    And every visit leaves the credential — which is the whole account — in
+    history, in proxy logs, and in the referrer of anything the page loads.
+    """
+    r = await noauth_client.get("/?k=t0ken", headers={"Accept": "text/html"},
+                                follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/"
+    cookie = r.headers["set-cookie"]
+    assert "wa_session=t0ken" in cookie
+    assert "HttpOnly" in cookie and "SameSite=Lax" in cookie
+
+
+async def test_the_bare_url_works_afterwards(noauth_client):
+    """/settings rather than /, which redirects to the pairing page when the
+    test store has no session — a detour that says nothing about the cookie."""
+    r = await noauth_client.get("/settings", headers={"Accept": "text/html",
+                                                      "Cookie": "wa_session=t0ken"})
+    assert r.status_code == 200
+
+
+async def test_no_cookie_still_means_no_access(noauth_client):
+    r = await noauth_client.get("/settings", headers={"Accept": "text/html"})
+    assert r.status_code == 401
+
+
+async def test_other_query_parameters_survive_the_redirect(noauth_client):
+    """/connect?flow=… must not lose the flow id on the way through."""
+    r = await noauth_client.get("/?k=t0ken&tab=groups",
+                                headers={"Accept": "text/html"},
+                                follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/?tab=groups"
+
+
+async def test_an_api_call_is_never_redirected(noauth_client):
+    """Redirecting an MCP client or a curl would break it, and neither keeps
+    cookies anyway. Only GETs that asked for HTML are traded."""
+    r = await noauth_client.get("/api/status?k=t0ken", follow_redirects=False)
+    assert r.status_code == 200
+
+    r = await noauth_client.post("/api/settings?k=t0ken", json={"enabled": False},
+                                 follow_redirects=False)
+    assert r.status_code == 200

@@ -6,7 +6,9 @@ Two separate things are configured here.
 how it pairs. They are read at startup and change only on restart.
 
 **Auto-reply settings** are edited at `/settings`, stored in your database, and
-take effect on the next message. Every one has an explanation on hover in the
+take effect on the next message. They can also be read and changed over MCP
+with `wa_get_reply_settings` and `wa_set_reply_settings` — the latter merges,
+so `{"enabled": true}` switches replies on and touches nothing else. Every one has an explanation on hover in the
 UI; this page is the same information, written down.
 
 ---

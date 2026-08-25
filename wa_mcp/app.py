@@ -442,6 +442,7 @@ class Auth:
 
         headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
         presented = headers.get("authorization", "")
+        from_url = False
         if not presented:
             # Also accept ?k=<token>: the custom-connector dialog in most MCP
             # clients takes a URL and nothing else, so a header-only scheme
@@ -450,6 +451,7 @@ class Auth:
                 if part.startswith("k="):
                     from urllib.parse import unquote
                     presented = f"Bearer {unquote(part[2:])}"
+                    from_url = True
                     break
         if not presented:
             cookie = headers.get("cookie", "")
@@ -465,7 +467,24 @@ class Auth:
             # access it was issued. Scope decides what it may then reach.
             if not await self._is_delivery(presented):
                 return await _plain(send, 401, b'{"error":"unauthorized"}')
+        elif from_url and self._is_browser(scope, headers):
+            # Trade the token in the URL for a cookie, then send the browser to
+            # the bare address. A URL nobody can remember gets pasted into a
+            # notes app, and every visit leaves the credential in history, in
+            # proxy logs and in the referrer of anything the page loads. One
+            # redirect and the address is just https://host/ from then on.
+            return await _set_session(send, presented[7:], scope)
         await self.app(scope, receive, send)
+
+    @staticmethod
+    def _is_browser(scope, headers: dict) -> bool:
+        """A page load, not an API call.
+
+        Only GETs that asked for HTML: redirecting an MCP client or a curl
+        would break it, and neither of them keeps cookies anyway.
+        """
+        return (scope.get("method") == "GET"
+                and "text/html" in headers.get("accept", ""))
 
     async def _is_delivery(self, presented: str) -> bool:
         if not presented.lower().startswith("bearer ") or self.rt is None:
@@ -473,6 +492,25 @@ class Auth:
         from .delivery import load
 
         return await load(self.rt.store, presented[7:].strip()) is not None
+
+
+async def _set_session(send, token: str, scope) -> None:
+    """Set the session cookie and redirect to the same path without ?k=."""
+    from urllib.parse import urlencode, parse_qsl
+
+    rest = [(k, v) for k, v in parse_qsl(scope.get("query_string", b"").decode())
+            if k != "k"]
+    target = scope.get("path", "/") + (f"?{urlencode(rest)}" if rest else "")
+    # HttpOnly so a script cannot read it; SameSite=Lax so it survives the
+    # redirect. Secure is left off because localhost is a normal way to run
+    # this and browsers reject Secure cookies over plain http.
+    cookie = (f"wa_session={token}; Path=/; HttpOnly; SameSite=Lax; "
+              f"Max-Age={30 * 86400}")
+    await send({"type": "http.response.start", "status": 303,
+                "headers": [(b"location", target.encode()),
+                            (b"set-cookie", cookie.encode()),
+                            (b"content-length", b"0")]})
+    await send({"type": "http.response.body", "body": b""})
 
 
 async def _plain(send, status: int, body: bytes) -> None:
@@ -568,10 +606,15 @@ async def wa_get_reply_settings() -> dict[str, Any]:
 
 @mcp.tool
 async def wa_set_reply_settings(settings_json: str) -> dict[str, Any]:
-    """Replace the auto-reply configuration with a JSON object.
+    """Change the auto-reply configuration. Send only what you are changing.
 
-    Pass the same shape wa_get_reply_settings returns. Unknown keys are ignored
-    and missing ones keep their defaults, so a partial object is safe.
+    Merged over the current settings, so a fragment is safe: {"enabled": true}
+    switches replies on and touches nothing else. Unknown keys are ignored.
+
+    Nested objects merge too, so {"reply": {"personal": "all"}} leaves the
+    allowlist and the cooldown alone.
+
+    Read it back with wa_get_reply_settings, whose shape this accepts.
 
     Everything defaults to off. Enabling replies on a real number can get it
     banned — confirm with the user before switching this on.
@@ -584,6 +627,9 @@ async def wa_set_reply_settings(settings_json: str) -> dict[str, Any]:
         raw = _json.loads(settings_json)
         if not isinstance(raw, dict):
             raise ToolError("settings_json must be a JSON object")
+        # Merged, not replaced: an agent sending {"enabled": true} means to
+        # switch replies on, not to clear the model and the allowlist with it.
+        raw = rt().trigger.settings.merged_with(raw).to_dict()
         # Never let a redacted value overwrite a real secret.
         current = rt().trigger.settings
         if raw.get("model", {}).get("api_key") == "***":
