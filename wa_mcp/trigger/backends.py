@@ -234,6 +234,16 @@ async def reply_via_model(cfg: ModelBackend, ctx: Context,
 
 # How the reply reaches the contact, which is not the same question in both
 # modes and must never be left to the user's system prompt to get right.
+# Not editable, because getting it wrong is not a matter of taste. Without it
+# a model with no clear identity mirrors the other person: it replied "Hi ganny
+# bhai" to "Hi", "ganny bhai" being that contact's nickname for the ACCOUNT
+# OWNER, not for them.
+NO_MIRRORING = (
+    "How the other person addresses you is their name for the account owner, "
+    "not your name for them. Never echo it back, and never copy their greeting "
+    "verbatim — answer in your own words."
+)
+
 DELIVERY_RETURN = (
     "Write only the message to send. It is delivered exactly as you write it, "
     "with nothing added, so do not describe what you would say — say it."
@@ -265,7 +275,7 @@ def compose_instruction(ctx: Context, nonce: str, expect_reply: bool = True) -> 
     delivery = (DELIVERY_RETURN if expect_reply else
                 DELIVERY_SEND.format(chat_name=ctx.chat_name or "them",
                                      chat_jid=ctx.chat_jid))
-    out = (out + "\n" + delivery).strip()
+    out = (out + "\n" + delivery + "\n" + NO_MIRRORING).strip()
     # The policy goes with the instructions, never alongside the user's words:
     # a rule sitting next to the message is easier to argue with than one the
     # model reads as its own.

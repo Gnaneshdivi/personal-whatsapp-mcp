@@ -362,6 +362,12 @@ class WhatsApp:
                 self.push_name = getattr(me, "PushName", "") or ""
             except Exception:
                 pass
+        if not self.push_name:
+            # The device row carries it even when the contact lookup does not.
+            # Without a name the prompt reads "answering on behalf of me", so
+            # the model has no idea who it is and copies its tone — and its form
+            # of address — straight out of the other person's messages.
+            self.push_name = self._own_push_name()
         loaded = await self.contacts.load()
         log.info("connected as %s (%d contacts)", self.self_jid or "?", loaded)
         if loaded:
@@ -533,6 +539,25 @@ class WhatsApp:
         if fixed:
             log.info("inferred read status for %d earlier messages", fixed)
         return fixed
+
+    def _own_push_name(self) -> str:
+        """Our own display name, read from whatsmeow's device row."""
+        import sqlite3
+
+        try:
+            db = sqlite3.connect(f"file:{self.session_dsn}?mode=ro", uri=True,
+                                 timeout=3)
+            try:
+                row = db.execute(
+                    "SELECT push_name FROM whatsmeow_device "
+                    "WHERE push_name IS NOT NULL AND push_name <> '' LIMIT 1"
+                ).fetchone()
+            finally:
+                db.close()
+            return (row[0] if row else "") or ""
+        except Exception as exc:
+            log.debug("own push name unavailable: %s", exc)
+            return ""
 
     async def persist_contact_names(self) -> int:
         """Write address-book names into chats.name.

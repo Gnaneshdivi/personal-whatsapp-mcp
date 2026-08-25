@@ -232,3 +232,34 @@ async def test_no_note_configured_means_silence(rt):
     eng._http = mock_model(reply="ok")
     await eng.consider(inbound())
     assert rt.wa.sent == []
+
+
+def test_the_model_is_told_not_to_mirror_how_it_is_addressed():
+    """It replied "Hi ganny bhai" to "Hi".
+
+    "ganny bhai" is that contact's nickname for the ACCOUNT OWNER, so the bot
+    greeted him with his own name for someone else. Not editable, because
+    getting this wrong is not a matter of taste.
+    """
+    from wa_mcp.trigger.backends import Context, compose_instruction
+
+    ctx = Context(message="Hi", chat_name="Akbar", chat_jid="1@s.whatsapp.net",
+                  sender_name="Akbar", sender_jid="1@s.whatsapp.net",
+                  me_name="Gnanesh", message_id="m", timestamp="0", history=[])
+    ctx.system = "You are replying as Gnanesh."
+    out = compose_instruction(ctx, "nonce")
+    assert "their name for the account owner" in out
+    assert "Never echo it back" in out
+
+
+def test_the_disclosure_names_the_owner_not_the_word_me():
+    """me_name was empty, so it said "on behalf of me" — meaning nothing."""
+    from wa_mcp.trigger.backends import Context, render
+    from wa_mcp.trigger.settings import Disclosure
+
+    ctx = Context(message="Hi", chat_name="Akbar", chat_jid="1@s.whatsapp.net",
+                  sender_name="Akbar", sender_jid="1@s.whatsapp.net",
+                  me_name="Gnanesh", message_id="m", timestamp="0", history=[])
+    out = render(Disclosure().message, ctx)
+    assert "on behalf of Gnanesh" in out
+    assert "on behalf of me" not in out
