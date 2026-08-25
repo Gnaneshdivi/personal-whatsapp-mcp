@@ -572,9 +572,22 @@ def build(rt, q: str, status: dict) -> str:
             "which is the useful case: watch a number without answering on it. "
             "The alerts about replies appear only once auto-reply is on.")
 
+    # Its own section at the end: a destructive-looking control next to the
+    # reply settings invites a misclick, and this one is only the browser.
+    session = section("This browser", (
+        row("Signed in", '<a class="ghost sm" href="/logout" '
+                         'style="text-decoration:none;padding:6px 12px;'
+                         'border:1px solid #3b4a54;border-radius:8px;'
+                         'color:#e9edef">Sign out</a>',
+            "Clears the session cookie, so this browser has to present the "
+            "token again.\n\nWhatsApp stays linked and nothing is deleted — "
+            "this is not unlinking the phone.",
+            hint="WhatsApp stays linked; only this browser signs out.")
+    ))
+
     body = (f'<div class="wrap"><a href="/{q}">&larr; Back to chats</a>'
             f'<h1>Settings {state}</h1>'
-            f'<form id="f">{backend}{model}{webhook}{disclosure}{hours}{guards}{fallback}{scope}{media}{summary}{notify}</form>'
+            f'<form id="f">{backend}{model}{webhook}{disclosure}{hours}{guards}{fallback}{scope}{media}{summary}{notify}{session}</form>'
             f'</div>'
             f'<div class="bar"><button type="button" id="save">Save</button>'
             f'<div id="out"></div></div>'

@@ -377,3 +377,41 @@ async def test_the_cookie_is_not_secure_on_plain_http(noauth_client):
     r = await noauth_client.get("/?k=t0ken", headers={"Accept": "text/html"},
                                 follow_redirects=False)
     assert "Secure" not in r.headers["set-cookie"]
+
+
+# ------------------------------------------------------------- signing out
+
+async def test_signing_out_clears_the_cookie(noauth_client):
+    r = await noauth_client.get("/logout", headers={"Cookie": "wa_session=t0ken"})
+    assert r.status_code == 200
+    cookie = r.headers["set-cookie"]
+    assert "wa_session=;" in cookie
+    assert "Max-Age=0" in cookie
+
+
+async def test_the_cleared_cookie_expires_rather_than_being_empty(noauth_client):
+    """An empty cookie still presents itself.
+
+    It would then fail auth on every request instead of falling back to asking
+    for the token, so the browser looks broken rather than signed out.
+    """
+    r = await noauth_client.get("/logout", headers={"Cookie": "wa_session=t0ken"})
+    assert "Max-Age=0" in r.headers["set-cookie"]
+
+    after = await noauth_client.get("/settings", headers={"Accept": "text/html"})
+    assert after.status_code == 401
+
+
+async def test_signing_out_does_not_unlink_whatsapp(noauth_client):
+    """Only the browser session. History syncs once, at pair time — a control
+    that could cost the archive must not sit next to the reply settings."""
+    body = (await noauth_client.get("/logout",
+                                    headers={"Cookie": "wa_session=t0ken"})).text
+    assert "still linked" in body
+    assert "nothing has been deleted" in body
+
+
+async def test_the_settings_page_offers_it(client):
+    page = (await client.get("/settings?k=t0ken")).text
+    assert 'href="/logout"' in page
+    assert "Sign out" in page

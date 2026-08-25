@@ -286,6 +286,31 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         back = await rt.oauth.complete_flow(request.path_params["flow"])
         return JSONResponse({"redirect": back})
 
+    async def sign_out(request):
+        """Clear the session cookie and ask for the token again.
+
+        Only the browser session — the WhatsApp device stays linked and every
+        message stays where it is. Unlinking is a different thing entirely and
+        is not a button, because history syncs once at pair time and cannot be
+        fetched again.
+        """
+        # Max-Age=0 rather than an empty value: an empty cookie still presents
+        # itself and would fail auth on every request instead of falling back
+        # to asking for the token.
+        headers = {"Set-Cookie": "wa_session=; Path=/; HttpOnly; SameSite=Lax; "
+                                 "Max-Age=0",
+                   "Cache-Control": "no-store"}
+        return HTMLResponse(
+            "<!doctype html><meta charset=utf-8><title>Signed out</title>"
+            "<style>body{background:#0b141a;color:#e9edef;font:15px/1.6 "
+            "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;"
+            "display:grid;place-items:center;height:100vh;margin:0;text-align:center}"
+            "p{color:#8696a0;max-width:34ch}</style>"
+            "<div><h2>Signed out</h2>"
+            "<p>This browser will need the token again. WhatsApp is still "
+            "linked and nothing has been deleted.</p></div>",
+            headers=headers)
+
     async def settings_page(request):
         from .settings_ui import build
 
@@ -435,6 +460,7 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         Route("/api/status", status_api),
         Route("/api/flow/{flow}", flow_api),
         Route("/settings", settings_page),
+        Route("/logout", sign_out),
         Route("/api/settings", settings_api, methods=["POST"]),
         Route("/qr.txt", qr_txt),
         Route("/media/{mid}", media),
