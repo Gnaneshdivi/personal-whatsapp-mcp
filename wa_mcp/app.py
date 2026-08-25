@@ -477,6 +477,12 @@ class Auth:
             # when OAuth is off, and the agent gets 401 rather than the scoped
             # access it was issued. Scope decides what it may then reach.
             if not await self._is_delivery(presented):
+                # A browser asking for a page gets somewhere to sign in. A bare
+                # 401 is correct and useless: it looks broken, and the person
+                # seeing it has no idea the answer is a token they were given
+                # once at install.
+                if self._is_browser(scope, headers):
+                    return await _sign_in_page(send, scope)
                 return await _plain(send, 401, b'{"error":"unauthorized"}')
         elif (from_url and self._is_browser(scope, headers)
               and scope.get("path") != "/logout"):
@@ -508,6 +514,48 @@ class Auth:
         from .delivery import load
 
         return await load(self.rt.store, presented[7:].strip()) is not None
+
+
+async def _sign_in_page(send, scope) -> None:
+    """401 with a form, rather than 401 with nothing.
+
+    The form posts the token back as ?k=, which the middleware above trades for
+    a cookie — so this reuses the path that already works instead of adding a
+    second way to authenticate.
+
+    Deliberately does NOT offer the pairing QR. That QR links a phone to this
+    server, so showing it to an unauthenticated visitor would let anyone who
+    knows the hostname claim an unpaired instance — including in the moments
+    after a log out.
+    """
+    path = scope.get("path", "/")
+    body = (
+        '<!doctype html><meta charset="utf-8"><title>Sign in</title>'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        "<style>body{background:#0b141a;color:#e9edef;font:15px/1.6 "
+        "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;"
+        "display:grid;place-items:center;height:100vh;margin:0}"
+        "form{display:grid;gap:12px;width:min(340px,88vw);text-align:center}"
+        "h1{font-size:20px;margin:0 0 4px}p{color:#8696a0;font-size:13px;margin:0}"
+        "input{background:#2a3942;border:1px solid #2a3942;border-radius:9px;"
+        "padding:11px 13px;color:#e9edef;font:inherit;outline:none}"
+        "input:focus{border-color:#00a884}"
+        "button{background:#00a884;color:#111b21;border:0;border-radius:9px;"
+        "padding:11px;font:inherit;font-weight:600;cursor:pointer}</style>"
+        f'<form method="GET" action="{path}">'
+        "<h1>Sign in</h1>"
+        "<p>Paste the access token this server was started with.</p>"
+        '<input name="k" type="password" placeholder="Access token" '
+        'autofocus autocomplete="current-password">'
+        "<button type=submit>Sign in</button>"
+        "<p>It is remembered on this browser for 30 days.</p>"
+        "</form>"
+    ).encode()
+    await send({"type": "http.response.start", "status": 401,
+                "headers": [(b"content-type", b"text/html; charset=utf-8"),
+                            (b"cache-control", b"no-store"),
+                            (b"content-length", str(len(body)).encode())]})
+    await send({"type": "http.response.body", "body": body})
 
 
 async def _set_session(send, token: str, scope) -> None:

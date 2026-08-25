@@ -557,3 +557,50 @@ async def test_logout_is_not_intercepted_by_the_cookie_trade(client):
                          follow_redirects=False)
     assert r.status_code == 200
     assert "Logged out" in r.text
+
+
+# ------------------------------------------------------------- signing in
+
+async def test_a_browser_without_a_token_gets_a_form(noauth_client):
+    """A bare 401 is correct and useless — it looks broken, and the person
+    seeing it has no idea the answer is a token from install."""
+    r = await noauth_client.get("/", headers={"Accept": "text/html"},
+                                follow_redirects=False)
+    assert r.status_code == 401
+    assert "Sign in" in r.text
+    assert 'name="k"' in r.text
+
+
+async def test_the_form_posts_back_to_the_path_it_was_asked_for(noauth_client):
+    """So signing in from /settings lands on /settings, not the chat list."""
+    r = await noauth_client.get("/settings", headers={"Accept": "text/html"},
+                                follow_redirects=False)
+    assert 'action="/settings"' in r.text
+
+
+async def test_the_form_reuses_the_token_path(noauth_client):
+    """It submits ?k=, which the middleware already trades for a cookie —
+    rather than adding a second way to authenticate."""
+    r = await noauth_client.get("/?k=t0ken", headers={"Accept": "text/html"},
+                                follow_redirects=False)
+    assert r.status_code == 303
+    assert "wa_session=t0ken" in r.headers["set-cookie"]
+
+
+async def test_an_api_client_still_gets_a_plain_401(noauth_client):
+    """A form would be nonsense to curl or an MCP client."""
+    r = await noauth_client.get("/api/status", follow_redirects=False)
+    assert r.status_code == 401
+    assert "Sign in" not in r.text
+
+
+async def test_the_sign_in_page_never_shows_the_pairing_qr(noauth_client):
+    """The QR links a phone to this server.
+
+    Shown to an unauthenticated visitor it would let anyone who knows the
+    hostname claim an unpaired instance — including in the moments after a log
+    out, when the host is already known.
+    """
+    r = await noauth_client.get("/", headers={"Accept": "text/html"},
+                                follow_redirects=False)
+    assert "<svg" not in r.text and "qr" not in r.text.lower()

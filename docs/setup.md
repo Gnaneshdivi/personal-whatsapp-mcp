@@ -49,6 +49,11 @@ for a session cookie and redirects to the bare address, so from then on
 `https://your-host/` is enough — and the credential stops appearing in browser
 history and proxy logs. The cookie is HttpOnly and lasts 30 days.
 
+A browser without the cookie gets a sign-in form where the token can be pasted,
+rather than a bare 401. The form deliberately does not offer the pairing QR:
+that QR links a phone to this server, so showing it to an unauthenticated
+visitor would let anyone who knows the hostname claim an unpaired instance.
+
 ### Then wait
 
 History sync is not instant, and it matters more than it looks:
