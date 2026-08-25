@@ -9,11 +9,24 @@ ships with Python.
 
 ```bash
 pip install suprai-whatsapp-mcp
-python -m wa_mcp --token=generate     # prints a token and starts the server
+python -m wa_mcp
 ```
 
-Open the URL it prints, scan the QR with WhatsApp → Linked Devices, and wait
-for the history sync to finish.
+Open http://127.0.0.1:8100, scan the QR with WhatsApp → Linked Devices, and
+wait for the history sync to finish. No token, no configuration — on loopback
+only this machine can reach it.
+
+Point Claude at `http://127.0.0.1:8100/mcp` and it works.
+
+Behind a tunnel it needs one:
+
+```bash
+PUBLIC_BASE_URL=https://you.ngrok.io python -m wa_mcp
+```
+
+That URL is on the public internet, so a token is generated and printed at
+startup — use it as `?k=<token>`. Set `WA_AUTH_TOKEN` to keep the same one
+across restarts.
 
 ---
 

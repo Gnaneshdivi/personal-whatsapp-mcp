@@ -648,9 +648,44 @@ def create_app(settings: Settings, storage: Storage):
     if settings.auth_token:
         log.info("bearer auth enabled")
         return Auth(scoped, settings.auth_token, oauth=bool(provider), rt=RT)
-    log.warning("WA_AUTH_TOKEN is not set — this server is UNAUTHENTICATED. "
-                "Fine on localhost, never behind a tunnel.")
+
+    # No token. On loopback that is right: only processes on this machine can
+    # reach it, and asking someone to manage a credential for their own laptop
+    # is friction with nothing on the other side of it.
+    #
+    # Reachable from elsewhere is a different thing. The whole point of this is
+    # to put it behind a tunnel so Claude can reach it, and that URL is on the
+    # public internet — ngrok subdomains get scanned. Open there means whoever
+    # finds it reads every message and can send as you, so a token is generated
+    # rather than left off. Nobody has to choose one; it is printed at startup.
+    if _is_reachable_from_elsewhere(settings):
+        if settings.allow_open:
+            log.warning("WA_ALLOW_OPEN=1 — reachable from other machines with "
+                        "NO authentication. Anyone who finds the URL can read "
+                        "and send on this WhatsApp account.")
+            return scoped
+        token = secrets.token_urlsafe(32)
+        settings.__dict__["auth_token"] = token
+        log.warning("No WA_AUTH_TOKEN set and this is reachable from other "
+                    "machines, so one was generated for this run:\n\n"
+                    "    ?k=%s\n\n"
+                    "Set WA_AUTH_TOKEN to keep it across restarts, or "
+                    "WA_ALLOW_OPEN=1 to run without authentication.", token)
+        return Auth(scoped, token, oauth=bool(provider), rt=RT)
+
+    log.info("no token set — open on %s, which only this machine can reach",
+             settings.host)
     return scoped
+
+
+def _is_reachable_from_elsewhere(settings) -> bool:
+    """Whether something other than this machine could open it.
+
+    A public base url counts even on loopback: it means a tunnel is pointed
+    here, which is exactly the case where open would be a mistake.
+    """
+    loopback = settings.host in ("127.0.0.1", "::1", "localhost")
+    return bool(settings.public_base_url) or not loopback
 
 
 # ========================================================== auto-reply
