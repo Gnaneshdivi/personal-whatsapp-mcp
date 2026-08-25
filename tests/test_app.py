@@ -37,6 +37,17 @@ async def client(tmp_path, monkeypatch):
             yield c
 
 
+def paired(monkeypatch):
+    """Pretend a number is linked.
+
+    Unpaired and paired are different front doors now — the QR for the first,
+    a sign-in form for the second — so a test has to say which it means.
+    """
+    from wa_mcp.app import RT
+
+    monkeypatch.setattr(RT.wa, "self_jid", "919100828649@s.whatsapp.net")
+
+
 async def rpc(c: httpx.AsyncClient, method: str, params: dict | None = None, id_: int = 1):
     r = await c.post(
         "/mcp?k=t0ken",
@@ -192,7 +203,8 @@ async def test_the_bare_url_works_afterwards(client):
     assert r.status_code == 200
 
 
-async def test_no_cookie_still_means_no_access(client):
+async def test_no_cookie_still_means_no_access(client, monkeypatch):
+    paired(monkeypatch)
     r = await client.get("/settings", headers={"Accept": "text/html"})
     assert r.status_code == 401
 
@@ -247,7 +259,7 @@ async def test_signing_out_clears_the_cookie(client):
     assert "Max-Age=0" in cookie
 
 
-async def test_the_cleared_cookie_expires_rather_than_being_empty(client):
+async def test_the_cleared_cookie_expires_rather_than_being_empty(client, monkeypatch):
     """An empty cookie still presents itself.
 
     It would then fail auth on every request instead of falling back to asking
@@ -256,6 +268,7 @@ async def test_the_cleared_cookie_expires_rather_than_being_empty(client):
     r = await client.get("/logout", headers={"Cookie": "wa_session=t0ken"})
     assert "Max-Age=0" in r.headers["set-cookie"]
 
+    paired(monkeypatch)
     after = await client.get("/settings", headers={"Accept": "text/html"})
     assert after.status_code == 401
 
@@ -419,9 +432,13 @@ async def test_logout_is_not_intercepted_by_the_cookie_trade(client):
 
 # ------------------------------------------------------------- signing in
 
-async def test_a_browser_without_a_token_gets_a_form(client):
-    """A bare 401 is correct and useless — it looks broken, and the person
-    seeing it has no idea the answer is a token from install."""
+async def test_a_browser_without_a_token_gets_a_form(client, monkeypatch):
+    """Once a number is linked there IS something to protect.
+
+    A bare 401 is correct and useless — it looks broken, and the person seeing
+    it has no idea the answer is a token from install.
+    """
+    paired(monkeypatch)
     r = await client.get("/", headers={"Accept": "text/html"},
                                 follow_redirects=False)
     assert r.status_code == 401
@@ -434,8 +451,9 @@ async def test_a_browser_without_a_token_gets_a_form(client):
     assert "MCP client" in r.text
 
 
-async def test_the_form_posts_back_to_the_path_it_was_asked_for(client):
+async def test_the_form_posts_back_to_the_path_it_was_asked_for(client, monkeypatch):
     """So signing in from /settings lands on /settings, not the chat list."""
+    paired(monkeypatch)
     r = await client.get("/settings", headers={"Accept": "text/html"},
                                 follow_redirects=False)
     assert 'action="/settings"' in r.text
@@ -457,13 +475,10 @@ async def test_an_api_client_still_gets_a_plain_401(client):
     assert "Sign in" not in r.text
 
 
-async def test_the_sign_in_page_never_shows_the_pairing_qr(client):
-    """The QR links a phone to this server.
-
-    Shown to an unauthenticated visitor it would let anyone who knows the
-    hostname claim an unpaired instance — including in the moments after a log
-    out, when the host is already known.
-    """
+async def test_the_sign_in_page_never_shows_the_qr_once_paired(client, monkeypatch):
+    """Before pairing the QR is the front door. After it, there is an account
+    behind that door and the QR would be a second way in."""
+    paired(monkeypatch)
     r = await client.get("/", headers={"Accept": "text/html"},
                                 follow_redirects=False)
     assert "<svg" not in r.text and "qr" not in r.text.lower()
@@ -490,3 +505,106 @@ async def test_the_settings_page_shows_it(client):
     assert 'id="mcpurl"' in page
     assert "/api/connect-info" in page
     assert "Connect an AI client" in page
+
+
+# ------------------------------------------------- the QR is the front door
+
+def offer_qr(monkeypatch):
+    """A code is waiting, without opening a socket.
+
+    /connect calls pair() for real, which reaches WhatsApp and then polls for
+    twenty seconds. A test that forgets this does not fail — it hangs.
+    """
+    from wa_mcp.app import RT
+
+    async def no_op():
+        return None
+
+    monkeypatch.setattr(RT.wa, "pair", no_op)
+    monkeypatch.setattr(RT.wa, "qr", "2@fake,code,for,a,test")
+
+
+async def test_an_unpaired_server_shows_the_qr_not_a_token_form(client, monkeypatch):
+    """Nothing is linked, so there is nothing to protect: no account, no
+    messages, no settings. Asking for a token first guards an empty server and
+    stops anyone getting started."""
+    offer_qr(monkeypatch)
+    r = await client.get("/", headers={"Accept": "text/html"},
+                         follow_redirects=False)
+    assert r.status_code == 307
+    assert "/connect" in r.headers["location"]
+
+
+async def test_the_connect_page_is_reachable_unpaired_without_a_token(client, monkeypatch):
+    offer_qr(monkeypatch)
+    r = await client.get("/connect", headers={"Accept": "text/html"})
+    assert r.status_code == 200
+    assert "Sign in" not in r.text
+    assert "<svg" in r.text
+
+
+async def test_scanning_signs_the_browser_in(client, monkeypatch):
+    """The whole flow: shown a QR, scans, comes back signed in.
+
+    Whoever completed the scan proved they hold the phone, which is a better
+    claim than a token pasted from a log. Without this they land on a sign-in
+    form seconds after linking their own account.
+    """
+    offer_qr(monkeypatch)
+
+    # 1. unpaired: the QR, and a ticket to come back with
+    first = await client.get("/connect", headers={"Accept": "text/html"})
+    assert first.status_code == 200
+    cookie = first.headers.get("set-cookie", "")
+    assert "wa_pairing=" in cookie
+    ticket = cookie.split("wa_pairing=")[1].split(";")[0]
+
+    # 2. they scan
+    paired(monkeypatch)
+
+    # 3. back with the ticket, and now they are signed in
+    second = await client.get("/connect", headers={"Accept": "text/html",
+                                                   "Cookie": f"wa_pairing={ticket}"},
+                              follow_redirects=False)
+    assert second.status_code == 303
+    assert "wa_session=t0ken" in second.headers.get("set-cookie", "")
+
+
+async def test_a_ticket_is_not_a_session(client, monkeypatch):
+    """It reaches /connect and nothing else, so a browser that watched the QR
+    without scanning cannot walk into a server somebody else then paired."""
+    offer_qr(monkeypatch)
+    first = await client.get("/connect", headers={"Accept": "text/html"})
+    ticket = first.headers["set-cookie"].split("wa_pairing=")[1].split(";")[0]
+
+    paired(monkeypatch)
+    for path in ("/", "/settings"):
+        r = await client.get(path, headers={"Accept": "text/html",
+                                            "Cookie": f"wa_pairing={ticket}"},
+                             follow_redirects=False)
+        assert r.status_code == 401, path
+
+    r = await client.get("/api/status", headers={"Cookie": f"wa_pairing={ticket}"})
+    assert r.status_code == 401
+
+
+async def test_a_stale_ticket_gets_nothing(client, monkeypatch):
+    """Single use: the ticket is spent the moment it becomes a session."""
+    paired(monkeypatch)
+    r = await client.get("/connect", headers={"Accept": "text/html",
+                                              "Cookie": "wa_pairing=made-up"},
+                         follow_redirects=False)
+    assert r.status_code == 401
+
+
+async def test_an_api_client_is_never_let_through_unpaired(client, monkeypatch):
+    """The open door is for a browser about to scan, not for anything that
+    wants the tools."""
+    offer_qr(monkeypatch)
+    r = await client.post("/mcp", json={"jsonrpc": "2.0", "id": 1,
+                                        "method": "tools/list"},
+                          headers={"Accept": "application/json, text/event-stream"})
+    assert r.status_code == 401
+
+    r = await client.get("/api/status")
+    assert r.status_code == 401

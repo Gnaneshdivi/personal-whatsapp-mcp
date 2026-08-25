@@ -60,6 +60,8 @@ class Runtime:
         # Set by create_app when a token has to be created at
         # startup; the store is not open before then.
         self.pending_auth = None
+        # One pairing is ever in flight, so one ticket.
+        self.pair_ticket = None
 
     # ------------------------------------------------------------- lifecycle
 

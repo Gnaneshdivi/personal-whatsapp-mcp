@@ -462,6 +462,31 @@ class Auth:
                 # 401 is correct and useless: it looks broken, and the person
                 # seeing it has no idea the answer is a token they were given
                 # once at install.
+                # Nothing paired yet means nothing to protect: no account,
+                # no messages, no settings. The QR is the front door, and
+                # whoever completes the scan gets the session — so setting it
+                # up is one step rather than "find the token, then scan".
+                #
+                # Someone else could reach an unpaired instance first, if they
+                # had the URL. They would be linking their own WhatsApp to your
+                # server, not reading anything of yours, and the fix is to log
+                # out and pair again.
+                if self._is_browser(scope, headers) and await self._unpaired():
+                    # And hand out a pairing ticket, so this browser can come
+                    # back once the scan lands. Without it the flow breaks at
+                    # the moment it succeeds: pairing completes, the page
+                    # reloads, the server is now paired, and the person who
+                    # just linked their phone is asked for a token.
+                    #
+                    # A ticket is not a session. It reaches /connect and
+                    # nothing else, and only becomes one by completing a scan.
+                    return await self.app(scope, receive,
+                                          _with_ticket(send, self.rt, headers))
+                if (self._is_browser(scope, headers)
+                        and self._ticket(headers)
+                        and self._ticket(headers) == getattr(self.rt, "pair_ticket", None)
+                        and scope.get("path") == "/connect"):
+                    return await self.app(scope, receive, send)
                 if self._is_browser(scope, headers):
                     return await _sign_in_page(send, scope, self.token_hint)
                 return await _plain(send, 401, b'{"error":"unauthorized"}')
@@ -489,12 +514,54 @@ class Auth:
         return (scope.get("method") == "GET"
                 and "text/html" in headers.get("accept", ""))
 
+    @staticmethod
+    def _ticket(headers: dict) -> str:
+        for part in headers.get("cookie", "").split(";"):
+            part = part.strip()
+            if part.startswith("wa_pairing="):
+                return part[11:]
+        return ""
+
+    async def _unpaired(self) -> bool:
+        """No WhatsApp account linked, so there is nothing behind the door."""
+        try:
+            return not (self.rt and self.rt.wa and self.rt.wa.self_jid)
+        except Exception:
+            return False
+
     async def _is_delivery(self, presented: str) -> bool:
         if not presented.lower().startswith("bearer ") or self.rt is None:
             return False
         from .delivery import load
 
         return await load(self.rt.store, presented[7:].strip()) is not None
+
+
+def _with_ticket(send, rt, headers: dict):
+    """Wrap `send` so the pairing page also sets a ticket cookie.
+
+    Minted once and kept on the runtime: one server pairs one number, so there
+    is exactly one pairing in flight and no reason for a table.
+    """
+    import secrets as _secrets
+
+    existing = Auth._ticket(headers)
+    if rt is not None and existing and existing == getattr(rt, "pair_ticket", None):
+        return send                       # already carrying a valid one
+    ticket = _secrets.token_urlsafe(18)
+    if rt is not None:
+        rt.pair_ticket = ticket
+
+    async def send_with_cookie(message):
+        if message["type"] == "http.response.start":
+            message = dict(message)
+            message["headers"] = list(message.get("headers", [])) + [
+                (b"set-cookie",
+                 f"wa_pairing={ticket}; Path=/; HttpOnly; SameSite=Lax; "
+                 f"Max-Age=1800".encode())]
+        await send(message)
+
+    return send_with_cookie
 
 
 async def _sign_in_page(send, scope, token_hint: str = "") -> None:

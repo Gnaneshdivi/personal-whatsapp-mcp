@@ -135,7 +135,29 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         if st["number"]:
             # Straight into the app. A "Connected" screen with a link is a step
             # nobody wants after they have already succeeded.
-            return Response(status_code=303, headers={"location": f"/{_q(request)}"})
+            #
+            # And with the session cookie: whoever completed the scan proved
+            # they hold the phone, which is a better claim than a token pasted
+            # from a log. Without this they would land on a sign-in form
+            # seconds after linking their own account.
+            headers = {"location": f"/{_q(request)}"}
+            ticket = ""
+            for part in request.headers.get("cookie", "").split(";"):
+                if part.strip().startswith("wa_pairing="):
+                    ticket = part.strip()[11:]
+            # Only the browser that was shown the QR gets the session. Anyone
+            # else reaching a paired server still has to present the token.
+            if (settings.auth_token and ticket
+                    and ticket == getattr(rt, "pair_ticket", None)):
+                rt.pair_ticket = None      # single use
+                secure = "; Secure" if (
+                    request.url.scheme == "https"
+                    or request.headers.get("x-forwarded-proto", "").startswith("https")
+                ) else ""
+                headers["set-cookie"] = (
+                    f"wa_session={settings.auth_token}; Path=/; HttpOnly; "
+                    f"SameSite=Lax; Max-Age={30 * 86400}{secure}")
+            return Response(status_code=303, headers=headers)
 
         if rt.wa is not None and not rt.wa.qr:
             try:
