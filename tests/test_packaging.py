@@ -59,7 +59,9 @@ def test_declared_dependencies_are_actually_imported():
 
 
 @pytest.mark.parametrize("name", ["README.md", "LICENSE", ".env.example",
-                                  "Dockerfile", ".dockerignore", ".gitignore"])
+                                  "Dockerfile", ".dockerignore", ".gitignore",
+                                  "CHANGELOG.md", "CONTRIBUTING.md",
+                                  ".github/workflows/ci.yml"])
 def test_the_files_a_deployment_needs_exist(name):
     p = ROOT / name
     assert p.is_file() and p.stat().st_size > 0, f"{name} is missing or empty"
@@ -131,3 +133,42 @@ def test_the_docs_say_there_is_no_memory():
     """The most common wrong assumption about a thing like this."""
     for name in ("README.md", "docs/auto-reply.md"):
         assert "no memory" in (ROOT / name).read_text().lower(), name
+
+
+def test_pypi_metadata_is_complete():
+    """What someone sees before they read anything else.
+
+    Absent, PyPI shows an unclassified package with no links — which reads as
+    abandoned regardless of the state of the code.
+    """
+    import tomllib
+
+    proj = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    for key in ("classifiers", "keywords", "urls", "authors", "license",
+                "license-files"):
+        assert proj.get(key), f"pyproject [project] is missing {key}"
+    assert "Repository" in proj["urls"]
+
+
+def test_the_typed_claim_is_backed_by_a_marker():
+    """Typing :: Typed without py.typed is a claim checkers cannot act on."""
+    import tomllib
+
+    proj = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    if "Typing :: Typed" in proj["classifiers"]:
+        assert (ROOT / "wa_mcp" / "py.typed").is_file()
+
+
+def test_no_license_classifier_alongside_a_license_expression():
+    """PEP 639: setuptools refuses to build with both, and the failure is late."""
+    import tomllib
+
+    proj = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    if isinstance(proj.get("license"), str):
+        bad = [c for c in proj["classifiers"] if c.startswith("License ::")]
+        assert not bad, f"remove {bad} — superseded by the license expression"
+
+
+def test_ci_installs_libmagic():
+    """Without it every test errors on collection, blaming a Python package."""
+    assert "libmagic" in (ROOT / ".github/workflows/ci.yml").read_text()

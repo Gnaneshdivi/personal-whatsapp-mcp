@@ -179,6 +179,9 @@ pip install -e ".[dev]"
 pytest -q
 ```
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for what the tests are for and which
+behaviour is deliberately not configurable.
+
 362 tests. Postgres and Mongo suites skip unless `WA_TEST_POSTGRES` /
 `WA_TEST_MONGO` point at a server.
 
