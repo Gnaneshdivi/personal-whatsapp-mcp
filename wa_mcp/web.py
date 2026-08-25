@@ -196,25 +196,17 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
   <p style="color:#8696a0;font-size:13px">
     WhatsApp &rarr; Settings &rarr; Linked devices &rarr; Link a device</p>
   <p id="phase" style="color:#00a884;font-size:13px">Waiting for you to scan&hellip;</p>
-  <details style="text-align:left;margin-top:14px">
-   <summary style="color:#53bdeb;font-size:13px;cursor:pointer">Copy the code as text</summary>
-   <p><code>{_esc(qr)}</code></p>
-   <p style="color:#8696a0;font-size:12px">Expires ~20s after it appeared.
-      This page refreshes itself.</p>
-  </details>
  </div></div>
 <script>
- // Pause the reload while the copy panel is open, or it clears the selection.
  // Poll status rather than blind-reloading: a reload while pairing is in
  // flight used to start a second client.
  setInterval(async () => {{
-   
    const s = await (await fetch("/api/status{_q(request)}")).json();
    if (s.number) {{ location.href = "/{_q(request)}"; return; }}
    const el = document.getElementById("phase");
    if (el) el.textContent = s.phase === "pairing"
      ? "Waiting for you to scan…" : ("Status: " + s.phase);
-   if (!document.querySelector("details[open]") && !s.number) location.reload();
+   if (!s.number) location.reload();
  }}, 4000);
 </script>"""))
 

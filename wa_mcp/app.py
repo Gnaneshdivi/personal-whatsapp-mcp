@@ -383,6 +383,27 @@ async def wa_typing(chat: str, typing: bool = True,
 
 
 @mcp.tool
+async def wa_profile(chat: str) -> dict[str, Any]:
+    """What WhatsApp will tell you about a contact.
+
+    A business name if the account is verified, how many devices they have
+    linked, and a photo URL. This is what THEY publish — distinct from the name
+    in your address book, which is what you saved.
+
+    `about` comes back empty in practice on live accounts, so do not rely on
+    it or report its absence as a fact about the person.
+
+    Same name resolution as wa_send: pass a name and it searches, refusing and
+    listing when several match.
+    """
+    try:
+        jid = await _resolve_chat(chat)
+        return {"ok": True, **await rt().wa.profile(jid)}
+    except Exception as exc:
+        return _fail(exc)
+
+
+@mcp.tool
 async def wa_check_number(phone: str) -> dict[str, Any]:
     """Check whether a phone number is on WhatsApp before messaging it.
 

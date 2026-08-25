@@ -930,6 +930,55 @@ class WhatsApp:
         return {"chat_jid": J.to_jid(chat_jid), "name": str(name), "topic": str(topic),
                 "participants": people, "participant_count": len(people)}
 
+    async def profile(self, chat_jid: str) -> dict[str, Any]:
+        """Whatever WhatsApp will say about someone.
+
+        Separate from the contact book, which holds the name YOU saved. This is
+        what they publish: a business name if the account is verified, how many
+        devices they have linked, and a photo.
+
+        `about` is in the protobuf and comes back empty for every contact tried
+        on a live account — whether whatsmeow does not populate it, or the
+        server withholds it, is not something this layer can tell. It is
+        returned as it arrives rather than dropped, so it starts working if
+        that changes upstream.
+
+        One call for one person. get_user_info takes several JIDs, but the
+        result is keyed by a JID protobuf rather than a string, so unpicking a
+        batch is fiddler than it is worth for a per-contact lookup.
+        """
+        self._guard()
+        jid = self._jid(chat_jid)
+        out: dict[str, Any] = {"chat_jid": J.normalise(chat_jid)}
+        try:
+            infos = await self._client.get_user_info(jid)
+        except Exception as exc:
+            raise SendFailed(f"profile lookup failed: {exc}") from exc
+
+        for entry in infos or []:
+            info = getattr(entry, "UserInfo", None)
+            if info is None:
+                continue
+            out["about"] = getattr(info, "Status", "") or ""
+            verified = getattr(info, "VerifiedName", None)
+            # A business account carries its verified name in a nested
+            # certificate; an ordinary one has the field but nothing in it.
+            name = getattr(getattr(verified, "Details", None), "verifiedName", "")
+            if name:
+                out["business_name"] = name
+            out["devices"] = len(getattr(info, "Devices", []) or [])
+            break
+
+        out["name"] = self.contacts.display_name(chat_jid)
+        try:
+            pic = await self._client.get_profile_picture(jid)
+            out["picture_url"] = getattr(pic, "URL", "") or ""
+        except Exception:
+            # Common and not an error: plenty of people have no photo, or
+            # restrict it to contacts.
+            out["picture_url"] = ""
+        return out
+
     async def avatar_url(self, chat_jid: str) -> str | None:
         """The profile picture URL for a chat, or None if there is not one.
 

@@ -608,3 +608,11 @@ async def test_an_api_client_is_never_let_through_unpaired(client, monkeypatch):
 
     r = await client.get("/api/status")
     assert r.status_code == 401
+
+
+async def test_the_profile_tool_is_registered(client):
+    """Devices, verified name and photo come from get_user_info, which nothing
+    used before — the contact book only ever held the name you saved."""
+    out = await rpc(client, "tools/list")
+    names = [t["name"] for t in out["result"]["tools"]]
+    assert "wa_profile" in names
