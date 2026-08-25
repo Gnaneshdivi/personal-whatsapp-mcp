@@ -415,3 +415,46 @@ async def test_the_settings_page_offers_it(client):
     page = (await client.get("/settings?k=t0ken")).text
     assert 'href="/logout"' in page
     assert "Sign out" in page
+
+
+# ------------------------------------------------------ signing out everywhere
+
+async def test_revoking_expires_issued_credentials(client):
+    """A browser sign-out leaves connectors untouched.
+
+    An OAuth token lasts 30 days and a routine token never expires, so without
+    this the only way to sign a lost client out is to wait — or to change
+    WA_AUTH_TOKEN and restart, which signs out everything including you.
+    """
+    from wa_mcp.app import RT
+    from wa_mcp.delivery import load, mint, mint_routine
+
+    a = await mint(RT.store, "1@s.whatsapp.net", 300)
+    b = await mint_routine(RT.store)
+    assert await load(RT.store, a) and await load(RT.store, b)
+
+    r = await client.post("/api/revoke-all?k=t0ken")
+    assert r.json()["ok"] is True and r.json()["revoked"] >= 2
+
+    assert await load(RT.store, a) is None
+    assert await load(RT.store, b) is None
+
+
+async def test_revoking_spares_the_configured_token(client):
+    """It comes from the environment and is re-registered on every start.
+
+    Revoking it would lock you out until a restart and do nothing after one.
+    """
+    await client.post("/api/revoke-all?k=t0ken")
+    r = await client.get("/api/status?k=t0ken")
+    assert r.status_code == 200
+
+
+async def test_revoking_also_signs_this_browser_out(client):
+    r = await client.post("/api/revoke-all?k=t0ken")
+    assert "Max-Age=0" in r.headers["set-cookie"]
+
+
+async def test_the_settings_page_offers_revoking(client):
+    page = (await client.get("/settings?k=t0ken")).text
+    assert 'id="revoke"' in page and "Sign out everywhere" in page

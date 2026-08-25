@@ -174,6 +174,21 @@ appear in the UI only when it is on.
 | `max_media_bytes` | `8388608` | The URL comes from a model, so it cannot be trusted to be small. |
 | `show_typing` | `true` | |
 
+## This browser
+
+| Control | What it does |
+|---|---|
+| Sign out | Clears the session cookie. This browser needs the token again. WhatsApp stays linked, connectors keep working. |
+| Sign out everywhere | Expires every credential this server issued — MCP connectors, routine tokens, pending hand-off tokens. Each has to authenticate again. |
+
+`WA_AUTH_TOKEN` is deliberately spared by both: it comes from the environment
+and is re-registered on every start, so revoking it would lock you out until a
+restart and do nothing after one. To change it, change the variable and
+restart.
+
+Neither unlinks WhatsApp. That is `wa_logout`, and it costs the message
+archive — history syncs once, at pair time.
+
 ## Template tags
 
 Usable in `system_prompt`, `webhook.body`, `webhook.headers` and

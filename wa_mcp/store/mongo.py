@@ -295,6 +295,13 @@ class MongoStore(Store):
 
     # -------------------------------------------------------------------- kv
 
+    async def list_kv(self, prefix: str) -> list[str]:
+        import re as _re
+
+        cur = self.db.kv.find({"_id": {"$regex": "^" + _re.escape(prefix)}},
+                              {"_id": 1})
+        return [d["_id"] async for d in cur]
+
     async def get_kv(self, key: str) -> dict[str, Any] | None:
         d = await self.db.kv.find_one({"key": key})
         return d.get("value") if d else None

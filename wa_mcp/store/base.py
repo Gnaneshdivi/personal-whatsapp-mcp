@@ -197,6 +197,15 @@ class Store(Protocol):
     async def get_kv(self, key: str) -> dict[str, Any] | None: ...
     async def put_kv(self, key: str, value: dict[str, Any]) -> None: ...
 
+    async def list_kv(self, prefix: str) -> list[str]:
+        """Keys beginning with `prefix`.
+
+        Needed to revoke every issued credential at once: they are stored one
+        row per token, and without enumeration the only way to sign a lost
+        connector out is to wait thirty days for it to expire.
+        """
+        ...
+
 
 # --------------------------------------------------------------- search syntax
 

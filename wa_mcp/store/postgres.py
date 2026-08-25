@@ -301,6 +301,12 @@ class PostgresStore(Store):
 
     # -------------------------------------------------------------------- kv
 
+    async def list_kv(self, prefix: str) -> list[str]:
+        async with self.pool.acquire() as c:
+            rows = await c.fetch(
+                "SELECT key FROM wa_kv WHERE key LIKE $1", prefix + "%")
+        return [r["key"] for r in rows]
+
     async def get_kv(self, key: str) -> dict[str, Any] | None:
         async with self.pool.acquire() as c:
             v = await c.fetchval("SELECT value FROM wa_kv WHERE key=$1", key)

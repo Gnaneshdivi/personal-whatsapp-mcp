@@ -583,6 +583,17 @@ def build(rt, q: str, status: dict) -> str:
             "token again.\n\nWhatsApp stays linked and nothing is deleted — "
             "this is not unlinking the phone.",
             hint="WhatsApp stays linked; only this browser signs out.")
+        + row("All other clients",
+              '<button type="button" class="ghost sm" id="revoke">'
+              'Sign out everywhere</button>',
+              "Expires every token this server has issued — MCP connectors, "
+              "routine tokens, and any pending hand-off tokens. They will have "
+              "to authenticate again.\n\nYour own WA_AUTH_TOKEN is not "
+              "affected: it comes from the environment and is re-registered on "
+              "every start, so revoking it would lock you out until a restart "
+              "and do nothing after one.\n\nWhatsApp stays linked.",
+              hint="Connectors keep working after a browser sign-out — this is "
+                   "what stops them.")
     ))
 
     body = (f'<div class="wrap"><a href="/{q}">&larr; Back to chats</a>'
@@ -675,6 +686,21 @@ function collect() {
   }
   return o;
 }
+
+const revokeBtn = $("#revoke");
+if (revokeBtn) revokeBtn.onclick = async () => {
+  if (!confirm("Sign out every connector and routine?\n\n"
+               + "They will each have to authenticate again. WhatsApp stays "
+               + "linked and nothing is deleted.")) return;
+  show("Revoking…");
+  try {
+    const r = await fetch("/api/revoke-all" + Q, {method: "POST"});
+    const d = await r.json();
+    show(d.ok ? `Signed out ${d.revoked} credential(s). This browser too — `
+                + "reload with your token."
+              : "Failed: " + (d.error || r.status), d.ok);
+  } catch (e) { show("Failed: " + e.message, false); }
+};
 
 $("#save").onclick = async () => {
   show("Saving…");

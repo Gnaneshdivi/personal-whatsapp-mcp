@@ -137,6 +137,13 @@ class SQLiteStore(Store):
             await self._db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
             log.info("migrated: added %s.%s", table, column)
 
+    async def list_kv(self, prefix: str) -> list[str]:
+        rows = await (await self.db.execute(
+            "SELECT key FROM kv WHERE key LIKE ? ESCAPE '\\'",
+            (prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%",)
+        )).fetchall()
+        return [r["key"] for r in rows]
+
     async def close(self) -> None:
         if self._db is not None:
             await self._db.close()

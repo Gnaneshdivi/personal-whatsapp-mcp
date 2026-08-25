@@ -311,6 +311,32 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
             "linked and nothing has been deleted.</p></div>",
             headers=headers)
 
+    async def revoke_all(request):
+        """Expire every issued credential. Not the configured one.
+
+        Signing out of a browser leaves connectors untouched: an OAuth token
+        lasts thirty days, and a routine token does not expire at all. Without
+        this the only way to sign a lost or unwanted client out is to wait, or
+        to change WA_AUTH_TOKEN and restart — which signs out everything
+        including you.
+
+        WA_AUTH_TOKEN itself is deliberately spared. It comes from the
+        environment and is re-registered on every start, so revoking it would
+        do nothing after a restart while locking you out until then.
+        """
+        keep = f"oauth.token.{settings.auth_token}" if settings.auth_token else ""
+        revoked = 0
+        for prefix in ("oauth.token.", "oauth.refresh."):
+            for key in await rt.store.list_kv(prefix):
+                if key == keep:
+                    continue
+                await rt.store.put_kv(key, {"expires_at": 0})
+                revoked += 1
+        log.warning("revoked %d issued credential(s)", revoked)
+        return JSONResponse({"ok": True, "revoked": revoked},
+                            headers={"Set-Cookie": "wa_session=; Path=/; "
+                                                   "HttpOnly; SameSite=Lax; Max-Age=0"})
+
     async def settings_page(request):
         from .settings_ui import build
 
@@ -461,6 +487,7 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         Route("/api/flow/{flow}", flow_api),
         Route("/settings", settings_page),
         Route("/logout", sign_out),
+        Route("/api/revoke-all", revoke_all, methods=["POST"]),
         Route("/api/settings", settings_api, methods=["POST"]),
         Route("/qr.txt", qr_txt),
         Route("/media/{mid}", media),

@@ -457,3 +457,27 @@ async def test_two_messages_in_the_same_second_keep_their_order(store):
     rows = await store.get_messages("1@s.whatsapp.net", limit=10)
     # Newest first, so the one sent second leads.
     assert [m.text for m in rows] == ["sent second", "sent first"]
+
+
+async def test_kv_keys_can_be_listed_by_prefix(store):
+    """Revoking every issued credential needs enumeration.
+
+    Tokens are one row each, so without this the only way to sign a lost
+    connector out is to wait for it to expire.
+    """
+    for key in ("oauth.token.aaa", "oauth.token.bbb", "oauth.refresh.ccc",
+                "trigger.settings"):
+        await store.put_kv(key, {"x": 1})
+
+    assert sorted(await store.list_kv("oauth.token.")) == [
+        "oauth.token.aaa", "oauth.token.bbb"]
+    assert len(await store.list_kv("oauth.")) == 3
+    assert await store.list_kv("nothing.") == []
+
+
+async def test_a_prefix_with_a_wildcard_is_not_a_pattern(store):
+    """LIKE treats % and _ as wildcards; a key containing one must not match
+    everything."""
+    await store.put_kv("a%b", {"x": 1})
+    await store.put_kv("azzb", {"x": 1})
+    assert await store.list_kv("a%b") == ["a%b"]
