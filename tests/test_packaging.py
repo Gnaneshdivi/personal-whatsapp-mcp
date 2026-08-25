@@ -239,3 +239,46 @@ def test_documented_environment_variables_exist():
     named = {v for v in named if not v.startswith("WA_TEST_")}
     missing = {v for v in named if v not in config}
     assert not missing, f"README documents unread variables: {sorted(missing)}"
+
+
+def test_every_imported_package_is_declared():
+    """The other direction, which is the one that breaks an install.
+
+    A module that arrives transitively works on the machine it was written on
+    and keeps working until the dependency that pulled it in changes. starlette
+    reached us through fastmcp for the whole of this project's life while being
+    imported by web.py.
+
+    Every import counts, wherever it sits. The first version of this test
+    skipped imports inside functions, reasoning that those are the optional
+    backends — and starlette is imported inside a function, so the test passed
+    with starlette undeclared, which is the exact bug it was written for. The
+    optional backends are optional because they are declared in an extra, not
+    because of where their import statement sits.
+    """
+    import ast
+    import sys
+
+    pyproject = (ROOT / "pyproject.toml").read_text()
+    base = pyproject.split("dependencies = [", 1)[1].split("]", 1)[0]
+    extras = pyproject.split("[project.optional-dependencies]", 1)[1] \
+                      .split("[project.scripts]", 1)[0]
+    declared = {d.split("[")[0].lower()
+                for d in re.findall(r'"([A-Za-z0-9_.-]+)', base + extras)}
+    # distribution name != import name
+    declared |= {"dotenv", "pymongo"}          # python-dotenv; ships with motor
+
+    imported = set()
+    for path in (ROOT / "wa_mcp").rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.Import):
+                imported |= {a.name.split(".")[0] for a in node.names}
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                imported.add(node.module.split(".")[0])
+
+    undeclared = sorted(m for m in imported
+                        if m not in sys.stdlib_module_names
+                        and m != "wa_mcp"
+                        and m.lower() not in declared)
+    assert not undeclared, (
+        f"imported but not declared in pyproject: {undeclared}")
