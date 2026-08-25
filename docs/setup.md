@@ -25,13 +25,58 @@ pip install -e ".[dev]"
 pytest -q
 ```
 
+## Install as a package
+
+The two commands above run it from the source tree, which is what you want
+while changing it. To install it as a normal command instead — on this machine
+or another one — build a wheel and install that:
+
+```bash
+pip install build            # once
+python -m build              # writes dist/*.whl and dist/*.tar.gz
+pip install dist/*.whl
+```
+
+That puts a `suprai-whatsapp-mcp` command on your PATH, and it no longer needs
+the source directory:
+
+```bash
+suprai-whatsapp-mcp                 # same options as run.py
+suprai-whatsapp-mcp --print-config
+```
+
+Install it into a **virtual environment**, not system Python — it pulls in
+neonize, which ships a compiled shared library.
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install dist/*.whl
+```
+
+The wheel refuses to install on Python older than 3.11 rather than failing
+later, so if `pip` says *"requires a different Python"*, that is the whole
+problem — the system `python3` on macOS is still 3.9.
+
+### Publishing it
+
+If you want `pip install` from anywhere, upload the same artifacts:
+
+```bash
+pip install twine
+twine upload dist/*
+```
+
+Set the `[project.urls]` in `pyproject.toml` to your repository first; they are
+what PyPI shows in the sidebar.
+
 ## First run
 
 ```bash
-python run.py
+python run.py                # from the source tree
+suprai-whatsapp-mcp          # if you installed the wheel
 ```
 
-`python -m wa_mcp` does exactly the same thing and takes the same options.
+`python -m wa_mcp` does the same thing. All three take the same options.
 
 Open <http://127.0.0.1:8100>. You will get a QR code — scan it with
 **WhatsApp → Settings → Linked Devices → Link a device**.
