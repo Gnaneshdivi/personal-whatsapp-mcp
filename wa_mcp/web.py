@@ -132,16 +132,6 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
 
     async def connect(request):
         st = rt.status()
-        flow = request.query_params.get("flow", "")
-
-        # An OAuth flow that is already satisfied — the number was linked before
-        # the client asked — should not make the user scan again. Hand the code
-        # straight back.
-        if flow and st["number"] and rt.oauth is not None:
-            back = await rt.oauth.complete_flow(flow)
-            if back:
-                return Response(status_code=303, headers={"location": back})
-
         if st["number"]:
             # Straight into the app. A "Connected" screen with a link is a step
             # nobody wants after they have already succeeded.
@@ -176,11 +166,6 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
 <script>setTimeout(()=>location.reload(),2000)</script>"""))
 
         svg = qr_svg(qr)
-        # During an OAuth flow the page polls for the pairing and then hands the
-        # browser back to whoever started it. Without this the user scans, sees
-        # a chat list, and the connector sits waiting forever.
-        after = (f"fetch('/api/flow/{_esc(flow)}').then(r=>r.json()).then(d=>{{"
-                 f"if(d.redirect) location.href=d.redirect;}});") if flow else ""
         return HTMLResponse(_page("Link WhatsApp", f"""
 <div style="display:grid;place-items:center;height:100vh;padding:20px">
  <div style="text-align:center;max-width:420px">
@@ -201,7 +186,7 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
  // Poll status rather than blind-reloading: a reload while pairing is in
  // flight used to start a second client.
  setInterval(async () => {{
-   {after}
+   
    const s = await (await fetch("/api/status{_q(request)}")).json();
    if (s.number) {{ location.href = "/{_q(request)}"; return; }}
    const el = document.getElementById("phase");
@@ -277,15 +262,6 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
     async def status_api(request):
         return JSONResponse(rt.status())
 
-    async def flow_api(request):
-        """Has this OAuth flow's pairing completed? If so, where to send them."""
-        if rt.oauth is None:
-            return JSONResponse({"redirect": None})
-        if not rt.status()["number"]:
-            return JSONResponse({"redirect": None, "waiting": True})
-        back = await rt.oauth.complete_flow(request.path_params["flow"])
-        return JSONResponse({"redirect": back})
-
     async def sign_out(request):
         """Log out completely: unlink WhatsApp and delete everything.
 
@@ -304,9 +280,9 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         """
         # Credentials first: if the unlink or the purge fails halfway, the
         # things that grant access are already dead rather than still live.
-        keep = f"oauth.token.{settings.auth_token}" if settings.auth_token else ""
+        keep = f"token.{settings.auth_token}" if settings.auth_token else ""
         revoked = 0
-        for prefix in ("oauth.token.", "oauth.refresh."):
+        for prefix in ("token.",):
             for key in await rt.store.list_kv(prefix):
                 if key == keep:
                     continue
@@ -493,7 +469,6 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         Route("/api/send", send_api, methods=["POST"]),
         Route("/api/read/{jid}", read_api, methods=["POST"]),
         Route("/api/status", status_api),
-        Route("/api/flow/{flow}", flow_api),
         Route("/settings", settings_page),
         Route("/logout", sign_out, methods=["GET", "POST"]),
         Route("/api/settings", settings_api, methods=["POST"]),

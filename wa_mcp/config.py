@@ -173,14 +173,7 @@ class Settings:
     store_raw_proto: bool = False
     device_os: str = "Chrome"
     device_platform: str = "CHROME"
-    # OAuth turns the connector flow into "click Connect, scan, done". The
-    # static token still works alongside it, which is what keeps localhost and
     # curl simple.
-    # Off by default. It is a real OAuth 2.1 server and it works, but for one
-    # person running this for themselves it is a lot of moving parts to get a
-    # token into a connector that accepts a URL. `?k=<token>` does that. Turn
-    # it on with WA_OAUTH=1 if you want scanning the QR to be the login.
-    oauth: bool = False
     # Run with no authentication even when reachable from other machines.
     # Every other setting lives here, and one read straight from the
     # environment somewhere else is one nobody finds when they go looking.
@@ -204,7 +197,6 @@ class Settings:
             store_raw_proto=_flag("WA_STORE_RAW_PROTO", False),
             device_os=os.getenv("WA_DEVICE_OS", "Chrome"),
             device_platform=os.getenv("WA_DEVICE_PLATFORM", "CHROME"),
-            oauth=_flag("WA_OAUTH", False),
             allow_open=_flag("WA_ALLOW_OPEN", False),
             history_days=int(os.getenv("WA_HISTORY_DAYS", "365")),
             history_size_mb=int(os.getenv("WA_HISTORY_SIZE_MB", "500")),

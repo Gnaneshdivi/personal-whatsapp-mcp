@@ -40,7 +40,8 @@ REPLY_TOOLS = ("wa_send", "wa_send_media", "wa_typing")
 PROTOCOL_METHODS = ("initialize", "ping", "tools/list", "resources/list",
                     "prompts/list", "notifications/initialized")
 
-KV_PREFIX = "oauth.token."
+# Named for what it holds, not for the scheme that used to issue it.
+KV_PREFIX = "token."
 
 
 def _kv(token: str) -> str:
@@ -50,9 +51,9 @@ def _kv(token: str) -> str:
 async def mint(store, chat_jid: str, ttl_seconds: int) -> str:
     """A token good for replying to one chat, until it expires.
 
-    Written through the same kv the OAuth tokens use, so the normal auth path
-    accepts it without a parallel code path deciding what counts as a valid
-    token — a second such path is how one of them ends up more permissive.
+    Written through the same kv the bearer token is checked against, so there
+    is one code path deciding what counts as a valid token — a second such
+    path is how one of them ends up more permissive.
     """
     token = secrets.token_urlsafe(32)
     await store.put_kv(_kv(token), {

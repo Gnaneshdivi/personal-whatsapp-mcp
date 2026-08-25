@@ -32,7 +32,7 @@ async def server(tmp_path, monkeypatch):
     is the exact distinction under test, so this binds a real port.
     """
     monkeypatch.delenv("WA_DATABASE_URL", raising=False)
-    settings = Settings(host="127.0.0.1", port=0, auth_token="t0ken", oauth=False)
+    settings = Settings(host="127.0.0.1", port=0, auth_token="t0ken")
     storage = resolve_storage("", tmp_path)
 
     import wa_mcp.app as appmod

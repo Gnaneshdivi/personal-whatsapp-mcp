@@ -50,9 +50,8 @@ for a session cookie and redirects to the bare address, so from then on
 history and proxy logs. The cookie is HttpOnly and lasts 30 days.
 
 A browser without the cookie gets a sign-in form where the token can be pasted,
-rather than a bare 401. The form deliberately does not offer the pairing QR:
-that QR links a phone to this server, so showing it to an unauthenticated
-visitor would let anyone who knows the hostname claim an unpaired instance.
+rather than a bare 401. On loopback there is no token and no form — it is open,
+because only this machine can reach it.
 
 ### Then wait
 
@@ -103,8 +102,9 @@ code runs inside a larger system.
 
 ## Running it behind a tunnel
 
-An MCP client needs to reach the server, and OAuth builds its redirect and
-metadata from `PUBLIC_BASE_URL`, so it has to be the public address:
+Set `PUBLIC_BASE_URL` to the public address. It is how the server knows it is
+no longer only reachable from this machine, so it generates a token rather than
+running open:
 
 ```bash
 PUBLIC_BASE_URL=https://wa.example.com python -m wa_mcp --port 8100
@@ -113,8 +113,8 @@ PUBLIC_BASE_URL=https://wa.example.com python -m wa_mcp --port 8100
 Cloudflare named tunnels work well. Quick tunnels (`--url`) are unreliable for
 this — they frequently establish only one of four edge connections and 404.
 
-ngrok's free tier serves an interstitial page before your app, which breaks the
-OAuth redirect.
+ngrok works. Its free tier serves an interstitial page before your app, which
+is a nuisance in a browser but does not affect the MCP endpoint.
 
 ## Docker
 

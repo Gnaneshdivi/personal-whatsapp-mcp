@@ -465,13 +465,12 @@ async def test_kv_keys_can_be_listed_by_prefix(store):
     Tokens are one row each, so without this the only way to sign a lost
     connector out is to wait for it to expire.
     """
-    for key in ("oauth.token.aaa", "oauth.token.bbb", "oauth.refresh.ccc",
+    for key in ("token.aaa", "token.bbb", "other.ccc",
                 "trigger.settings"):
         await store.put_kv(key, {"x": 1})
 
-    assert sorted(await store.list_kv("oauth.token.")) == [
-        "oauth.token.aaa", "oauth.token.bbb"]
-    assert len(await store.list_kv("oauth.")) == 3
+    assert sorted(await store.list_kv("token.")) == ["token.aaa", "token.bbb"]
+    assert len(await store.list_kv("token")) == 2
     assert await store.list_kv("nothing.") == []
 
 

@@ -19,9 +19,12 @@ First release intended for anyone other than its author.
 - Delivery tokens: a hand-off webhook gets a credential good for three tools,
   one chat, and a few minutes.
 - Storage on SQLite, Postgres or Mongo behind one setting.
-- OAuth, so an MCP client authenticates by scanning the QR.
 
 ### Behaviour worth knowing
+- **Authentication is one bearer token**, given as a header or `?k=`. Not
+  needed on loopback, generated and printed when reachable from elsewhere.
+  There is no OAuth: it existed, worked, and was a great deal of machinery to
+  get a credential into a connector dialog that accepts a URL.
 - **Log out removes everything**: it unlinks WhatsApp, deletes messages, chats
   and settings, and revokes every issued credential. History syncs once at pair
   time, so this cannot be undone by pairing again.

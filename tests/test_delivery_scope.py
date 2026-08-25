@@ -99,9 +99,9 @@ async def test_a_minted_token_loads_and_is_scoped(store):
 
 async def test_an_expired_token_is_gone(store):
     token = await mint(store, CHAT, 300)
-    raw = await store.get_kv(f"oauth.token.{token}")
+    raw = await store.get_kv(f"token.{token}")
     raw["expires_at"] = time.time() - 1
-    await store.put_kv(f"oauth.token.{token}", raw)
+    await store.put_kv(f"token.{token}", raw)
     assert await load(store, token) is None
 
 
@@ -128,8 +128,7 @@ async def app_client(tmp_path, monkeypatch):
     from wa_mcp.config import Settings, resolve_storage
 
     monkeypatch.delenv("WA_DATABASE_URL", raising=False)
-    app = create_app(Settings(host="127.0.0.1", port=0, auth_token="t0ken",
-                              oauth=False),
+    app = create_app(Settings(host="127.0.0.1", port=0, auth_token="t0ken"),
                      resolve_storage("", tmp_path))
     async with LifespanManager(app) as m:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=m.app),
@@ -237,9 +236,9 @@ async def test_an_expired_delivery_does_not_authorise_a_routine(store):
 
     rec = await load(store, await mint_routine(store))
     tok = await mint(store, CHAT, 300)
-    raw = await store.get_kv(f"oauth.token.{tok}")
+    raw = await store.get_kv(f"token.{tok}")
     raw["expires_at"] = time.time() - 1
-    await store.put_kv(f"oauth.token.{tok}", raw)
+    await store.put_kv(f"token.{tok}", raw)
     assert await load(store, tok) is None          # the gate would pass None
     assert refusal(rec, "tools/call", "wa_send", {"to": CHAT}, None) is not None
 

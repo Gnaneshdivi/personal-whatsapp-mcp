@@ -396,19 +396,24 @@ async def wa_check_number(phone: str) -> dict[str, Any]:
 # ============================================================== plumbing
 
 class Auth:
-    """Bearer token, with OAuth discovery deliberately turned off.
+    """One bearer token, presented as a header or as ?k=.
 
-    A 401 carrying `WWW-Authenticate: Bearer` tells an MCP client that OAuth
-    exists, so it walks /.well-known/*, reaches dynamic client registration,
-    fails, and reports "couldn't register with the sign-in service" — never
-    trying the token that was in the URL all along. 404 on those paths ends the
-    search immediately and the client falls back to the URL as given.
+    That is the whole scheme. It replaced an OAuth 2.1 server — dynamic client
+    registration, PKCE, rotating refresh tokens — which worked, and which was a
+    great deal of machinery to get a credential into a connector dialog that
+    accepts a URL and nothing else.
+
+    The discovery paths answer 404 rather than 401. A 401 carrying
+    `WWW-Authenticate: Bearer` tells an MCP client that OAuth exists, so it
+    walks /.well-known/*, tries to register, fails, and reports "couldn't
+    register with the sign-in service" — never trying the token that was in the
+    URL all along. 404 ends that search immediately.
     """
 
     SKIP = ("/.well-known/", "/register", "/authorize", "/token", "/revoke")
 
-    def __init__(self, app, token: str, oauth: bool = False, rt=None):
-        self.app, self.token, self.oauth = app, token, oauth
+    def __init__(self, app, token: str, rt=None):
+        self.app, self.token = app, token
         self.rt = rt
 
     async def __call__(self, scope, receive, send):
@@ -416,40 +421,9 @@ class Auth:
             return await self.app(scope, receive, send)
 
         path = scope.get("path", "")
-        query = scope.get("query_string", b"").decode()
 
         if any(path.startswith(p) for p in self.SKIP):
-            if self.oauth:
-                # These are the OAuth endpoints — fastmcp serves them and does
-                # its own checks. Gating them behind our token would make the
-                # flow impossible, since a client discovering us has no token.
-                return await self.app(scope, receive, send)
-            return await _plain(send, 404, b'{"error":"no_oauth_provider"}')
-
-        # A browser arriving from /authorize carries no token — the flow id in
-        # the URL is the capability, and it is a 24-byte secret minted by us for
-        # exactly this request.
-        if self.oauth and (path in ("/connect", "/qr.txt")
-                           or path.startswith("/api/flow/")) and "flow" in (query + path):
-            return await self.app(scope, receive, send)
-
-        # With OAuth on, /mcp is authenticated by fastmcp against a real access
-        # token. Rather than run two parallel checks, the static token is
-        # REGISTERED as an access token at startup (see create_app) — so it is
-        # not a special case at all, just a token that never expires. `?k=` is
-        # rewritten into the header fastmcp expects, since connector dialogs
-        # cannot set headers.
-        if self.oauth and path.startswith("/mcp"):
-            headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
-            if not headers.get("authorization"):
-                for part in query.split("&"):
-                    if part.startswith("k="):
-                        from urllib.parse import unquote
-                        scope = dict(scope)
-                        scope["headers"] = list(scope["headers"]) + [
-                            (b"authorization", f"Bearer {unquote(part[2:])}".encode())]
-                        break
-            return await self.app(scope, receive, send)
+            return await _plain(send, 404, b'{"error":"not_found"}')
 
         headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
         presented = headers.get("authorization", "")
@@ -474,8 +448,8 @@ class Auth:
         if not secrets.compare_digest(presented, f"Bearer {self.token}"):
             # A delivery token is a real credential too, just a narrow one.
             # Without this branch the hand-off flow cannot authenticate at all
-            # when OAuth is off, and the agent gets 401 rather than the scoped
-            # access it was issued. Scope decides what it may then reach.
+            # at all, and the agent gets 401 rather than the scoped access it
+            # was issued. Scope decides what it may then reach.
             if not await self._is_delivery(presented):
                 # A browser asking for a page gets somewhere to sign in. A bare
                 # 401 is correct and useless: it looks broken, and the person
@@ -592,20 +566,6 @@ def create_app(settings: Settings, storage: Storage):
     global RT
     RT = Runtime(settings, storage)
 
-    base = settings.public_base_url or f"http://{settings.host}:{settings.port}"
-    provider = None
-    if settings.oauth:
-        from .oauth import WhatsAppOAuth
-
-        provider = WhatsAppOAuth(RT, base)
-        RT.oauth = provider
-        log.info("OAuth enabled — connectors can pair by scanning the QR")
-
-    # Assigned unconditionally, including None. `mcp` is a module-level object,
-    # so setting this only when OAuth is on leaves a provider from a previous
-    # app in place — still holding that app's runtime, and its closed store.
-    mcp.auth = provider
-
     app = mcp.http_app(
         transport="http",
         stateless_http=True,
@@ -622,13 +582,6 @@ def create_app(settings: Settings, storage: Storage):
     @asynccontextmanager
     async def lifespan(a):
         await RT.start()
-        if provider is not None and settings.auth_token:
-            # The configured token becomes an ordinary, non-expiring access
-            # token. One code path validates everything, and curl keeps working.
-            await RT.store.put_kv(f"oauth.token.{settings.auth_token}", {
-                "token": settings.auth_token, "client_id": "static",
-                "scopes": [], "expires_at": None, "subject": "static-token",
-            })
         try:
             async with prior_lifespan(a):
                 yield
@@ -647,7 +600,7 @@ def create_app(settings: Settings, storage: Storage):
 
     if settings.auth_token:
         log.info("bearer auth enabled")
-        return Auth(scoped, settings.auth_token, oauth=bool(provider), rt=RT)
+        return Auth(scoped, settings.auth_token, rt=RT)
 
     # No token. On loopback that is right: only processes on this machine can
     # reach it, and asking someone to manage a credential for their own laptop
@@ -671,7 +624,7 @@ def create_app(settings: Settings, storage: Storage):
                     "    ?k=%s\n\n"
                     "Set WA_AUTH_TOKEN to keep it across restarts, or "
                     "WA_ALLOW_OPEN=1 to run without authentication.", token)
-        return Auth(scoped, token, oauth=bool(provider), rt=RT)
+        return Auth(scoped, token, rt=RT)
 
     log.info("no token set — open on %s, which only this machine can reach",
              settings.host)

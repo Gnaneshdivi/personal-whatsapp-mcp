@@ -54,7 +54,6 @@ class Runtime:
         self.contacts = ContactBook(self.storage.session_dsn, self.storage.session_is_file)
         self.wa = None            # built lazily: importing neonize loads 21MB of Go
         self.trigger = None       # built in start(), needs the store connected
-        self.oauth = None         # set by create_app when OAuth is on
         self._subscribers: list = []
         self._have_history = False   # set in start(); see status()
         self._summary_task = None

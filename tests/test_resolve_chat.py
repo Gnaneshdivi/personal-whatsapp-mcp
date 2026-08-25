@@ -18,7 +18,7 @@ async def rt(tmp_path, monkeypatch):
     monkeypatch.delenv("WA_DATABASE_URL", raising=False)
     from wa_mcp.runtime import Runtime
 
-    r = Runtime(Settings(auth_token="t", oauth=False), resolve_storage("", tmp_path))
+    r = Runtime(Settings(auth_token="t"), resolve_storage("", tmp_path))
     await r.store.connect()
 
     import wa_mcp.app as A

@@ -82,7 +82,7 @@ stale file cannot override what your platform set.
 | Variable | Default | Notes |
 |---|---|---|
 | `WA_AUTH_TOKEN` | — | Bearer token for the UI and MCP. Anyone holding it can read and send on your account. |
-| `PUBLIC_BASE_URL` | — | The address clients reach you on. Required for OAuth. |
+| `PUBLIC_BASE_URL` | — | Tells the server it is reachable from elsewhere, so it protects itself and prints the right link. Set it to the tunnel's address. |
 | `WA_DATABASE_URL` | SQLite | `postgresql://…`, `mongodb://…`, or `sqlite:////abs/path.db` |
 | `WA_DATA_DIR` | OS data dir | Where the session and SQLite files live. |
 | `WA_HISTORY_DAYS` | 365 | **Pair-time only.** Cannot change without unlinking. |
@@ -106,8 +106,9 @@ One variable decides everything:
 python -m wa_mcp --port 8100
 ```
 
-Behind a tunnel, set `PUBLIC_BASE_URL` to the public address — OAuth builds its
-redirect and metadata from it.
+Behind a tunnel, set `PUBLIC_BASE_URL` to the public address. That is how the
+server knows it is reachable from elsewhere, so it generates a token instead of
+running open, and prints a link that works.
 
 ```bash
 docker build -t suprai-wa .
@@ -119,12 +120,21 @@ at pair time — losing it means re-pairing and losing every message you had.
 
 ## Connecting an MCP client
 
+Locally, no token at all:
+
 ```
-https://your-host/mcp?k=<WA_AUTH_TOKEN>
+http://127.0.0.1:8100/mcp
 ```
 
-Or leave the token off and let it use OAuth: the client opens a browser, you
-scan the QR, and pairing and authorising become one step.
+Behind a tunnel, add the one printed at startup:
+
+```
+https://your-host/mcp?k=<token>
+```
+
+That is the whole authentication scheme. There is no OAuth, no sign-in flow and
+nothing to register — a connector dialog takes a URL, so the credential goes in
+the URL.
 
 ## Documentation
 

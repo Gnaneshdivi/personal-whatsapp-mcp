@@ -19,7 +19,7 @@ UI; this page is the same information, written down.
 |---|---|---|
 | `WA_AUTH_TOKEN` | — | Not needed on loopback, where it runs open. Generated and printed when reachable from elsewhere. `MCP_AUTH_TOKEN` is an alias. |
 | `WA_ALLOW_OPEN` | `0` | Run with no authentication even when reachable. Only for a network you trust. |
-| `PUBLIC_BASE_URL` | — | The address clients reach you on. Required for OAuth — the redirect and metadata are built from it. Behind a tunnel this is the public URL. |
+| `PUBLIC_BASE_URL` | — | Tells the server it is reachable from elsewhere, so it protects itself and prints the right link. Set it to the tunnel's address. |
 | `WA_HOST` | `127.0.0.1` | In Docker this must be `0.0.0.0` or nothing outside the container can reach it. |
 | `WA_PORT` | `8100` | |
 | `WA_DATABASE_URL` | *unset* | Unset → SQLite. See [setup](setup.md#storage). |
@@ -29,7 +29,6 @@ UI; this page is the same information, written down.
 | `WA_HISTORY_SIZE_MB` | `500` | **Pair-time only.** |
 | `WA_DEVICE_OS` | `Chrome` | Shown in WhatsApp → Linked Devices. |
 | `WA_DEVICE_PLATFORM` | `CHROME` | |
-| `WA_OAUTH` | `0` | Opt in for QR-as-login. `?k=<token>` works everywhere and is fewer parts. |
 | `WA_STORE_RAW_PROTO` | `0` | Keeps each message's raw protobuf. Only needed to re-download media never fetched; ~1 KB per message. |
 | `LOG_LEVEL` | `INFO` | |
 

@@ -27,17 +27,11 @@ async def _app(monkeypatch, tmp_path, **env):
         monkeypatch.setenv(k, v)
 
     settings = Settings(host=env.get("_host", "127.0.0.1"), port=0,
-                        auth_token="", oauth=False,
+                        auth_token="",
                         allow_open=env.get("WA_ALLOW_OPEN") == "1",
                         public_base_url=env.get("PUBLIC_BASE_URL", ""))
     app = create_app(settings, resolve_storage("", tmp_path))
     return LifespanManager(app), settings
-
-
-def test_oauth_is_off_by_default():
-    """It works, but it is a lot of moving parts to get a token into a
-    connector that accepts a URL. `?k=` does that."""
-    assert Settings().oauth is False
 
 
 async def test_loopback_with_no_token_is_open(monkeypatch, tmp_path):
@@ -99,7 +93,7 @@ async def test_a_configured_token_is_never_replaced(monkeypatch, tmp_path):
     from wa_mcp.app import create_app
 
     monkeypatch.delenv("WA_ALLOW_OPEN", raising=False)
-    settings = Settings(host="0.0.0.0", port=0, auth_token="mine", oauth=False)
+    settings = Settings(host="0.0.0.0", port=0, auth_token="mine")
     app = create_app(settings, resolve_storage("", tmp_path))
     async with LifespanManager(app):
         assert settings.auth_token == "mine"
