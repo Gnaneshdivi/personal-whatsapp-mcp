@@ -5,7 +5,7 @@ Two ways, and the choice is mostly about latency against capability.
 | | Model | Claude Routine |
 |---|---|---|
 | Who replies | this server | your routine |
-| Time to reply | **~2–3 s** | **~20–30 s** |
+| Time to reply | a few seconds | noticeably longer — see below |
 | Can use tools | no | yes |
 | Can take its time | no | yes |
 | Needs an API key | yes | no, a routine token |
@@ -18,9 +18,9 @@ look a booking up, wait for a human to approve, work for a minute.
 
 # A. An OpenAI-compatible model
 
-This server calls the endpoint and sends what comes back. Measured at **2.3 s
-median** on `gpt-4o-mini` (range 2.2–2.5 s over four calls), which reads as a
-normal typing pause.
+This server calls the endpoint and sends what comes back — one HTTP request,
+so it lands in about the time the model takes to answer. On a small model that
+reads as a normal typing pause.
 
 Works with OpenRouter, OpenAI, Groq, Together, Ollama, LM Studio.
 
@@ -60,10 +60,14 @@ Send yourself a message from another phone to check.
 The routine holds your WhatsApp connector and **sends the reply itself**. This
 server hands the message over and stops.
 
-Slower — measured at **22 s** from inbound message to reply landing, against
-2.3 s for the model. The fire request returns in about 1.3 s; the rest is the
-session starting and running on Anthropic's side. Fine for anything
-considered, wrong for small talk.
+Slower, and structurally so. The fire request returns as soon as the session
+is created, not when it is done — after that Anthropic has to spin a session
+up, load its connectors, run the prompt, and call back here to send. That is
+several steps on someone else's infrastructure, so it is tens of seconds rather
+than a few, and it varies with load and with what the routine actually does.
+
+Fine for anything considered. Wrong for small talk — the other person will see
+nothing happening for long enough to wonder.
 
 ### 1. Create the routine
 
