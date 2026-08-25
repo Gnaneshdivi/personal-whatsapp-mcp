@@ -5,7 +5,7 @@ Two ways, and the choice is mostly about latency against capability.
 | | Model | Claude Routine |
 |---|---|---|
 | Who replies | this server | your routine |
-| Time to reply | a few seconds | noticeably longer — see below |
+| Time to reply | a few seconds | longer, and variable |
 | Can use tools | no | yes |
 | Can take its time | no | yes |
 | Needs an API key | yes | no, a routine token |
