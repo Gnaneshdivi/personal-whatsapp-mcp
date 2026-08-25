@@ -182,7 +182,8 @@ class TriggerEngine:
         backend = self.settings.backend
         try:
             if backend == "model":
-                text = await reply_via_model(self.settings.model, ctx, self._http)
+                text = await reply_via_model(self.settings.model, ctx, self._http,
+                                             self.settings.notify.handoff_marker)
             else:
                 # Minted per delivery, not per account: whatever the agent on
                 # the other end is talked into, it can only reply here.
@@ -192,8 +193,9 @@ class TriggerEngine:
 
                     token = await mint(self.rt.store, msg.chat_jid,
                                        self.settings.webhook.token_ttl_seconds)
-                text = await reply_via_webhook(self.settings.webhook, ctx,
-                                               self._http, token)
+                text = await reply_via_webhook(
+                    self.settings.webhook, ctx, self._http, token,
+                    self.settings.notify.handoff_marker)
         except BackendError as exc:
             reason = f"{backend} backend failed: {exc}"
             g = self.settings.guardrails
@@ -218,12 +220,32 @@ class TriggerEngine:
         handoff = bool(marker and marker in text)
         if handoff:
             text = text.replace(marker, "").strip()
+            # The marker means it did not understand or cannot answer. Whatever
+            # it improvised alongside is the least reliable thing it produced —
+            # asked "Scrum undatledha?" it apologised in broken transliterated
+            # Telugu. Send the owner's own wording instead, which is fixed,
+            # correct, and says the same thing every time.
+            fallback = (self.settings.guardrails.fallback_message or "").strip()
+            if fallback:
+                text = fallback
 
         media: list[str] = []
         if self.settings.send_media:
             text, media = extract_media(text)
 
         if not text and not media:
+            # It said only the marker: it did not understand and knows it. The
+            # fallback is the right thing to send — silence leaves them waiting
+            # on an answer that is not coming.
+            if handoff:
+                g = self.settings.guardrails
+                if g.fallback_message:
+                    await self._say(msg, g.fallback_message)
+                notified = await self._notify(msg, "the assistant did not understand")
+                return self._record(Decision(bool(g.fallback_message),
+                                             "not understood — handed over",
+                                             g.fallback_message, backend,
+                                             notified=notified))
             return self._record(Decision(False, "backend returned an empty reply",
                                          backend=backend))
         limit = self.settings.reply.max_reply_chars

@@ -185,14 +185,33 @@ async def test_allowed_topics_are_also_told_to_the_model(rt):
 # ============================================================ notify
 
 async def test_handoff_marker_is_stripped_before_the_customer_sees_it(rt):
+    """And the owner's wording is sent, not whatever it improvised.
+
+    The marker means it could not answer, so the sentence it wrote alongside is
+    the least reliable thing in the reply — asked a question in Telugu it
+    apologised in broken transliteration. The configured fallback is fixed and
+    correct; the marker itself must never reach anyone.
+    """
     eng = TriggerEngine(rt)
-    eng.settings = settings(notify={"on_handoff": True, "jid": "919999999999"})
+    eng.settings = settings(
+        notify={"on_handoff": True, "jid": "919999999999"},
+        guardrails={"fallback_message": "Passing this to a person."})
     eng._http = model(reply="I'll get someone. [[NOTIFY]]")
     d = await eng.consider(inbound())
     customer_msg = rt.wa.sent[0][1]
     assert "[[NOTIFY]]" not in customer_msg
-    assert customer_msg == "I'll get someone."
+    assert customer_msg == "Passing this to a person."
     assert d.notified is not None
+
+
+async def test_with_no_fallback_configured_its_own_words_are_used(rt):
+    """Something has to go out; silence leaves them waiting."""
+    eng = TriggerEngine(rt)
+    eng.settings = settings(notify={"on_handoff": True, "jid": "919999999999"},
+                            guardrails={"fallback_message": ""})
+    eng._http = model(reply="I'll get someone. [[NOTIFY]]")
+    await eng.consider(inbound())
+    assert rt.wa.sent[0][1] == "I'll get someone."
 
 
 async def test_notification_goes_to_the_configured_number(rt):

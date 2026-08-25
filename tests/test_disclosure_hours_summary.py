@@ -248,8 +248,8 @@ def test_the_model_is_told_not_to_mirror_how_it_is_addressed():
                   me_name="Gnanesh", message_id="m", timestamp="0", history=[])
     ctx.system = "You are replying as Gnanesh."
     out = compose_instruction(ctx, "nonce")
-    assert "their name for the account owner" in out
-    assert "Never echo it back" in out
+    assert "their name for the owner" in out
+    assert "never echo it back" in out
 
 
 def test_the_disclosure_names_the_owner_not_the_word_me():
@@ -277,3 +277,52 @@ def test_the_summary_asks_for_attention_items_as_points():
                 "chases something asked about before"):
         assert ask in out, ask
     assert "who, what they want, and the deadline" in out
+
+
+# ------------------------------------------------------- not understanding
+
+async def test_a_reply_it_cannot_give_sends_your_wording_not_its_own(rt):
+    """Asked "Scrum undatledha?" it apologised in broken transliterated Telugu.
+
+    Whatever it improvises alongside the marker is the least reliable thing it
+    produced — it has just told you it did not follow the question. The owner's
+    fallback is fixed, correct, and says the same thing every time.
+    """
+    eng = TriggerEngine(rt)
+    eng.settings = enabled(
+        guardrails={"fallback_message": "Not sure on that one — passing it on."},
+        notify={"route": "number", "jid": "919999999999"})
+    eng._http = mock_model(reply="Naanu sure illa, pass maadthini. [[NOTIFY]]")
+
+    d = await eng.consider(inbound())
+    sent = [t for to, t in rt.wa.sent if to.startswith("919812345678")]
+    assert sent == ["Not sure on that one — passing it on."]
+    assert d.notified, "the owner has to hear about it"
+
+
+async def test_a_marker_only_reply_still_says_something(rt):
+    """Silence leaves them waiting on an answer that is not coming."""
+    eng = TriggerEngine(rt)
+    eng.settings = enabled(
+        guardrails={"fallback_message": "Not sure — passing it on."},
+        notify={"route": "number", "jid": "919999999999"})
+    eng._http = mock_model(reply="[[NOTIFY]]")
+
+    d = await eng.consider(inbound())
+    assert any(t == "Not sure — passing it on." for _, t in rt.wa.sent)
+    assert d.notified
+
+
+def test_the_instruction_forbids_guessing_and_mirroring():
+    from wa_mcp.trigger.backends import Context, compose_instruction
+
+    ctx = Context(message="Hi ra", chat_name="T", chat_jid="1@s.whatsapp.net",
+                  sender_name="T", sender_jid="1@s.whatsapp.net",
+                  me_name="Gnanesh", message_id="m", timestamp="0", history=[])
+    ctx.system = "You are replying as Gnanesh."
+    out = compose_instruction(ctx, "n", marker="[[NOTIFY]]")
+    assert 'saying "Hi ra" is answered with "Hi"' in out
+    assert "their slang, their familiar particles, or their register" in out
+    assert "do NOT guess" in out
+    assert "Half an answer is worse than none" in out
+    assert "[[NOTIFY]]" in out

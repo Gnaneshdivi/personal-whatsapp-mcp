@@ -158,7 +158,8 @@ def wrap_untrusted(text: str, nonce: str) -> str:
 
 
 async def reply_via_model(cfg: ModelBackend, ctx: Context,
-                          client: httpx.AsyncClient | None = None) -> str:
+                          client: httpx.AsyncClient | None = None,
+                          marker: str = "[[NOTIFY]]") -> str:
     """Call an OpenAI-compatible endpoint.
 
     History is mapped to real conversation turns rather than pasted into one
@@ -171,7 +172,8 @@ async def reply_via_model(cfg: ModelBackend, ctx: Context,
 
     nonce = new_nonce()
     messages: list[dict[str, str]] = []
-    messages.append({"role": "system", "content": compose_instruction(ctx, nonce)})
+    messages.append({"role": "system",
+                     "content": compose_instruction(ctx, nonce, marker=marker)})
 
     # Inbound turns are all untrusted — history as much as the latest message,
     # since an attacker can seed an instruction and wait a turn for it to be
@@ -239,9 +241,23 @@ async def reply_via_model(cfg: ModelBackend, ctx: Context,
 # bhai" to "Hi", "ganny bhai" being that contact's nickname for the ACCOUNT
 # OWNER, not for them.
 NO_MIRRORING = (
-    "How the other person addresses you is their name for the account owner, "
-    "not your name for them. Never echo it back, and never copy their greeting "
-    "verbatim — answer in your own words."
+    "You are not the account owner and not one of their friends. How the other "
+    "person addresses you is their name for the owner, not your name for them: "
+    "never echo it back. Do not copy their greeting, their slang, their "
+    "familiar particles, or their register — a message saying \"Hi ra\" is "
+    "answered with \"Hi\". Reply in plain, standard language."
+)
+
+# The failure this prevents is worse than saying nothing: asked "Scrum
+# undatledha?" the model produced fluent-looking Telugu that meant nothing,
+# because filling the turn is easier than admitting it did not follow.
+NO_GUESSING = (
+    "If you cannot tell what they are asking, or the answer is not in this "
+    "conversation, do NOT guess, do not answer a nearby question, and do not "
+    "produce filler to fill the turn. Say plainly that you are not sure and "
+    "that you will pass it on — in one short sentence — and end your reply "
+    "with {marker} on its own. Half an answer is worse than none: they act on "
+    "it. Only answer when you actually understood."
 )
 
 DELIVERY_RETURN = (
@@ -256,7 +272,8 @@ DELIVERY_SEND = (
 )
 
 
-def compose_instruction(ctx: Context, nonce: str, expect_reply: bool = True) -> str:
+def compose_instruction(ctx: Context, nonce: str, expect_reply: bool = True,
+                        marker: str = "[[NOTIFY]]") -> str:
     """The instruction block both backends send, built once.
 
     They used to be written separately — a system prompt for the model, a
@@ -275,7 +292,8 @@ def compose_instruction(ctx: Context, nonce: str, expect_reply: bool = True) -> 
     delivery = (DELIVERY_RETURN if expect_reply else
                 DELIVERY_SEND.format(chat_name=ctx.chat_name or "them",
                                      chat_jid=ctx.chat_jid))
-    out = (out + "\n" + delivery + "\n" + NO_MIRRORING).strip()
+    out = (out + "\n" + delivery + "\n" + NO_MIRRORING
+           + "\n" + NO_GUESSING.format(marker=marker or "[[NOTIFY]]")).strip()
     # The policy goes with the instructions, never alongside the user's words:
     # a rule sitting next to the message is easier to argue with than one the
     # model reads as its own.
@@ -305,7 +323,7 @@ def guarded_history(ctx: Context, nonce: str) -> str:
 
 async def reply_via_webhook(cfg: WebhookBackend, ctx: Context,
                             client: httpx.AsyncClient | None = None,
-                            reply_token: str = "") -> str:
+                            reply_token: str = "", marker: str = "[[NOTIFY]]") -> str:
     """POST the configured body and pull the reply out of the response."""
     if not cfg.configured:
         raise BackendError("webhook backend is not configured")
@@ -320,7 +338,7 @@ async def reply_via_webhook(cfg: WebhookBackend, ctx: Context,
     # that is all an HTTP body can carry. Instructions first, untrusted data
     # last, exactly as the messages array orders them.
     nonce = new_nonce()
-    prompt = compose_instruction(ctx, nonce, cfg.expect_reply)
+    prompt = compose_instruction(ctx, nonce, cfg.expect_reply, marker)
     history = guarded_history(ctx, nonce)
     if history:
         prompt += "\n\nConversation so far:\n" + history
