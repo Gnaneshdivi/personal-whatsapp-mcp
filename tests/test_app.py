@@ -357,3 +357,23 @@ async def test_an_api_call_is_never_redirected(noauth_client):
     r = await noauth_client.post("/api/settings?k=t0ken", json={"enabled": False},
                                  follow_redirects=False)
     assert r.status_code == 200
+
+
+async def test_the_cookie_is_secure_behind_a_proxy(noauth_client):
+    """Cloudflare terminates TLS, so the hop to us is plain http.
+
+    Reading scope["scheme"] alone would mark the cookie insecure on every
+    tunnelled deployment, which is all of them.
+    """
+    r = await noauth_client.get("/?k=t0ken",
+                                headers={"Accept": "text/html",
+                                         "X-Forwarded-Proto": "https"},
+                                follow_redirects=False)
+    assert "Secure" in r.headers["set-cookie"]
+
+
+async def test_the_cookie_is_not_secure_on_plain_http(noauth_client):
+    """A Secure cookie over http is dropped, and localhost is a normal setup."""
+    r = await noauth_client.get("/?k=t0ken", headers={"Accept": "text/html"},
+                                follow_redirects=False)
+    assert "Secure" not in r.headers["set-cookie"]

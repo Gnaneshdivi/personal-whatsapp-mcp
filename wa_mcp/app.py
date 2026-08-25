@@ -502,10 +502,15 @@ async def _set_session(send, token: str, scope) -> None:
             if k != "k"]
     target = scope.get("path", "/") + (f"?{urlencode(rest)}" if rest else "")
     # HttpOnly so a script cannot read it; SameSite=Lax so it survives the
-    # redirect. Secure is left off because localhost is a normal way to run
-    # this and browsers reject Secure cookies over plain http.
+    # redirect. Secure only when the request actually arrived over TLS —
+    # browsers drop a Secure cookie on plain http, and localhost is a normal
+    # way to run this. Behind a proxy the scheme is in x-forwarded-proto,
+    # since the hop to us is http even when the browser used https.
+    headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
+    https = (scope.get("scheme") == "https"
+             or headers.get("x-forwarded-proto", "").split(",")[0].strip() == "https")
     cookie = (f"wa_session={token}; Path=/; HttpOnly; SameSite=Lax; "
-              f"Max-Age={30 * 86400}")
+              f"Max-Age={30 * 86400}" + ("; Secure" if https else ""))
     await send({"type": "http.response.start", "status": 303,
                 "headers": [(b"location", target.encode()),
                             (b"set-cookie", cookie.encode()),
