@@ -118,9 +118,11 @@ scan the QR, and pairing and authorising become one step.
 | | |
 |---|---|
 | [Setup](docs/setup.md) | Install, pairing, storage, tunnels, Docker |
+| [Setting up replies](docs/recipes.md) | Step by step with an OpenAI-compatible model, and with a Claude Routine |
 | [Settings](docs/settings.md) | Every environment variable and all 64 auto-reply settings |
 | [Auto-reply](docs/auto-reply.md) | The two modes, the prompt, the security model |
 | [Choosing a model](docs/models.md) | What was measured, and the minimum that works |
+| [Architecture](docs/architecture.md) | Where the code lives — start here to contribute |
 
 ## Auto-reply
 

@@ -87,7 +87,8 @@ def test_the_dockerfile_persists_the_session():
 
 # --------------------------------------------------------------- the docs
 
-DOCS = ["setup.md", "settings.md", "auto-reply.md", "models.md"]
+DOCS = ["setup.md", "settings.md", "auto-reply.md", "models.md",
+        "recipes.md", "architecture.md"]
 
 
 @pytest.mark.parametrize("name", DOCS)

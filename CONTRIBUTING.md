@@ -1,5 +1,17 @@
 # Contributing
 
+## You do not need a WhatsApp number
+
+The whole suite runs against temporary files and a fake client — no phone, no
+network, no account:
+
+```bash
+pip install -e ".[dev]"
+pytest -q          # 335 passing
+```
+
+Only pairing and live sending need a real number, and no test does either.
+
 ## Getting set up
 
 ```bash
@@ -34,6 +46,9 @@ which — those are worth reading before changing the behaviour they pin.
 
 If you fix a bug, the test should fail without the fix. Reverting the change
 and watching it go red is worth the thirty seconds.
+
+See [docs/architecture.md](docs/architecture.md) for where things live and
+what to start with.
 
 ## Things to know before changing them
 
