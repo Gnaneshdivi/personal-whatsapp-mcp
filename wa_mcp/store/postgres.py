@@ -234,7 +234,8 @@ class PostgresStore(Store):
         if to_ts is not None:
             args.append(to_ts); sql += f" AND ts <= ${len(args)}"
         args.append(limit)
-        sql += f" ORDER BY ts DESC LIMIT ${len(args)}"
+        # Same second-resolution tie as SQLite; id is insertion order.
+        sql += f" ORDER BY ts DESC, id DESC LIMIT ${len(args)}"
         async with self.pool.acquire() as c:
             return [_msg(r) for r in await c.fetch(sql, *args)]
 

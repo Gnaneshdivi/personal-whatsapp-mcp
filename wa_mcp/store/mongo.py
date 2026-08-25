@@ -235,7 +235,9 @@ class MongoStore(Store):
             ts["$lte"] = to_ts
         if ts:
             q["ts"] = ts
-        cur = self.db.messages.find(q).sort("ts", -1).limit(limit)
+        # _id is monotonic per insert, so it breaks the second-resolution tie
+        # the same way id does on the SQL backends.
+        cur = self.db.messages.find(q).sort([("ts", -1), ("_id", -1)]).limit(limit)
         return [_msg(d) async for d in cur]
 
     async def get_message(self, message_id: str) -> Message | None:

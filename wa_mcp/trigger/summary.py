@@ -28,11 +28,25 @@ PROMPT = """\
 Summarise the WhatsApp messages below for {me_name}, who has not been reading them.
 
 {important}
-Write for someone scanning quickly:
-- Lead with anything needing a reply or a decision, naming the person.
-- Then one line per remaining conversation, grouped by person.
-- Say nothing about chats with nothing worth reporting.
-- No preamble, no sign-off, no restating this instruction.
+Structure the summary in exactly these two parts, and omit a part only if it
+would be empty:
+
+NEEDS YOU
+One bullet for each thing waiting on {me_name} personally. Include anything
+where someone:
+  - asks them to check, look at, review, confirm or approve something
+  - asks a direct question that has not been answered
+  - is waiting on a reply, a decision, a file, a payment or a date
+  - chases something asked about before
+Each bullet: who, what they want, and the deadline if one was given. Quote the
+few words that make the ask concrete. Be specific — "Akbar wants the beta
+account set up for Shiwani" beats "Akbar had a request".
+
+EVERYTHING ELSE
+One short line per remaining conversation, grouped by person. Skip chats with
+nothing worth reporting entirely.
+
+No preamble, no sign-off, no restating these instructions.
 
 Messages since the last summary:
 {body}"""
@@ -58,20 +72,42 @@ def destination(s, self_jid: str) -> str:
     return ""
 
 
+# Bounds, so one noisy group cannot drown the summary — or bankrupt it. A
+# single association group produced 89 messages of forwarded ads and market
+# tips in one window, which is both the bulk of the cost and none of the value.
+PER_CHAT = 12          # newest N inbound messages from any one conversation
+PER_MESSAGE = 300      # a forwarded brochure says nothing more in its 900th char
+TOTAL_CHARS = 12000    # ceiling on the whole prompt body
+
+
+def _trim(text: str) -> str:
+    t = " ".join((text or "").split())
+    return t if len(t) <= PER_MESSAGE else t[:PER_MESSAGE] + "…"
+
+
 async def collect(rt, since_ms: int, s) -> tuple[str, int]:
-    """Inbound messages since `since_ms`, grouped by chat. Returns (text, count)."""
+    """Inbound messages since `since_ms`, grouped by chat. Returns (text, count).
+
+    Newest first within a chat, then reversed for reading order, so when a
+    conversation is truncated it is the OLD end that is dropped — the recent
+    turns are the ones an ask is likely to be in.
+    """
     book = rt.contacts
-    lines, total = [], 0
+    lines, total, size = [], 0, 0
     for chat in await rt.store.list_chats(limit=s.summary.max_chats * 5):
         if chat.is_group and not s.summary.include_groups:
             continue
-        rows = [m for m in await rt.store.get_messages(chat.chat_jid, limit=40)
-                if not m.is_from_me and m.text and m.ts > since_ms]
+        rows = [m for m in await rt.store.get_messages(chat.chat_jid, limit=60)
+                if not m.is_from_me and m.text and m.ts > since_ms][:PER_CHAT]
         if not rows:
             continue
         name = book.display_name(chat.chat_jid, chat_name=chat.name)
-        body = "\n".join(f"  {m.text}" for m in reversed(rows))
-        lines.append(f"{name}:\n{body}")
+        body = "\n".join(f"  {_trim(m.text)}" for m in reversed(rows))
+        block = f"{name}:\n{body}"
+        if size + len(block) > TOTAL_CHARS:
+            break
+        lines.append(block)
+        size += len(block)
         total += len(rows)
         if len(lines) >= s.summary.max_chats:
             break
@@ -100,9 +136,12 @@ async def build(rt, since_ms: int) -> tuple[str, int]:
     ctx = Context(message=prompt, chat_name="", chat_jid="", sender_name="",
                   sender_jid="", me_name=getattr(rt.wa, "push_name", "") or "you",
                   message_id="", timestamp=str(int(time.time())), history=[])
-    ctx.system = ("You write short, factual summaries of WhatsApp activity. "
-                  "Plain text, no markdown headings, no bullets deeper than one "
-                  "level.")
+    ctx.system = (
+        "You write short, factual summaries of WhatsApp activity for someone "
+        "catching up. Plain text — no markdown, no bold, no nested bullets; "
+        "this is read in WhatsApp. Never invent a request that is not in the "
+        "messages, and never soften one that is: the whole value of this is "
+        "that nothing asked of them gets missed.")
     return await reply_via_model(s.model, ctx), count
 
 

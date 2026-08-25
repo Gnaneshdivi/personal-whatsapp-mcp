@@ -263,3 +263,17 @@ def test_the_disclosure_names_the_owner_not_the_word_me():
     out = render(Disclosure().message, ctx)
     assert "on behalf of Gnanesh" in out
     assert "on behalf of me" not in out
+
+
+def test_the_summary_asks_for_attention_items_as_points():
+    """"Check this" is the thing that must never be buried in prose."""
+    from wa_mcp.trigger.summary import PROMPT
+
+    out = PROMPT.format(me_name="Gnanesh", important="", body="…")
+    assert "NEEDS YOU" in out
+    for ask in ("check, look at, review, confirm or approve",
+                "direct question that has not been answered",
+                "waiting on a reply, a decision, a file, a payment or a date",
+                "chases something asked about before"):
+        assert ask in out, ask
+    assert "who, what they want, and the deadline" in out

@@ -319,7 +319,12 @@ class SQLiteStore(Store):
             sql += " AND ts >= ?"; args.append(from_ts)
         if to_ts is not None:
             sql += " AND ts <= ?"; args.append(to_ts)
-        sql += " ORDER BY ts DESC LIMIT ?"
+        # id breaks the tie. WhatsApp timestamps are second-resolution — every
+        # ts ends in 000 — so two messages sent in the same second compare
+        # equal and come back in whatever order the engine feels like. The
+        # disclosure and the reply it precedes land in the same second, and the
+        # thread showed them the wrong way round against WhatsApp itself.
+        sql += " ORDER BY ts DESC, id DESC LIMIT ?"
         args.append(limit)
         rows = await (await self.db.execute(sql, args)).fetchall()
         return [_msg(r) for r in rows]

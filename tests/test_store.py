@@ -440,3 +440,20 @@ async def test_a_chat_with_no_messages_has_no_tick(store):
                if c.chat_jid == "2@s.whatsapp.net"]
     assert chat.last_from_me is False
     assert chat.last_status is None
+
+
+async def test_two_messages_in_the_same_second_keep_their_order(store):
+    """WhatsApp timestamps are second-resolution — every ts ends in 000.
+
+    Anything sent inside one second compares equal, so without a tie-break the
+    order is whatever the engine returns. The disclosure and the reply it
+    precedes land in the same second, and the thread showed them reversed
+    against WhatsApp itself.
+    """
+    ts = 1787637108000
+    await store.upsert_message(msg("first", ts=ts, text="sent first"))
+    await store.upsert_message(msg("second", ts=ts, text="sent second"))
+
+    rows = await store.get_messages("1@s.whatsapp.net", limit=10)
+    # Newest first, so the one sent second leads.
+    assert [m.text for m in rows] == ["sent second", "sent first"]
