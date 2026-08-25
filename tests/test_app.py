@@ -430,6 +430,8 @@ async def test_a_browser_without_a_token_gets_a_form(client):
     # And says where to find it. A password box for a password nobody gave
     # you is not a sign-in page.
     assert "WA_AUTH_TOKEN" in r.text or "printed when the server starts" in r.text
+    # And what it gets you, so the next step is not a guess either.
+    assert "MCP client" in r.text
 
 
 async def test_the_form_posts_back_to_the_path_it_was_asked_for(client):
@@ -465,3 +467,26 @@ async def test_the_sign_in_page_never_shows_the_pairing_qr(client):
     r = await client.get("/", headers={"Accept": "text/html"},
                                 follow_redirects=False)
     assert "<svg" not in r.text and "qr" not in r.text.lower()
+
+
+# --------------------------------------------------- getting the MCP URL
+
+async def test_the_connector_url_is_available_in_the_app(client):
+    """It used to exist only in a line of the startup log — no help to anyone
+    who closed that terminal, or runs this as a service."""
+    d = (await client.get("/api/connect-info?k=t0ken")).json()
+    assert d["mcp_url"].endswith("/mcp?k=t0ken")
+    assert d["needs_token"] is True
+
+
+async def test_the_connector_url_needs_a_signed_in_session(client):
+    """It contains the token, which is the whole account."""
+    r = await client.get("/api/connect-info")
+    assert r.status_code == 401
+
+
+async def test_the_settings_page_shows_it(client):
+    page = (await client.get("/settings?k=t0ken")).text
+    assert 'id="mcpurl"' in page
+    assert "/api/connect-info" in page
+    assert "Connect an AI client" in page

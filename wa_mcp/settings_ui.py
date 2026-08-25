@@ -573,6 +573,21 @@ def build(rt, q: str, status: dict) -> str:
             "which is the useful case: watch a number without answering on it. "
             "The alerts about replies appear only once auto-reply is on.")
 
+    # The connector URL, where someone can actually reach it. It used to
+    # exist only in a line of the startup log, which is no help to anyone who
+    # closed that terminal or runs this as a service.
+    connect = section("Connect an AI client", (
+        row("MCP endpoint",
+            '<input class="ctl" id="mcpurl" readonly value="loading…">',
+            "Paste this into Claude, or any MCP client that takes a URL.\n\n"
+            "On this machine it needs no token. Reachable from elsewhere and "
+            "the token is part of the URL — which is the whole credential, so "
+            "treat it like a password.",
+            wide=True)
+        + row("", '<button type="button" class="ghost sm" id="copymcp">Copy</button>',
+              "", wide=True)
+    ))
+
     # One control that does the whole thing. Anything less left something
     # behind that the person clicking it believed was gone.
     session = section("Log out", (
@@ -589,7 +604,7 @@ def build(rt, q: str, status: dict) -> str:
 
     body = (f'<div class="wrap"><a href="/{q}">&larr; Back to chats</a>'
             f'<h1>Settings {state}</h1>'
-            f'<form id="f">{backend}{model}{webhook}{disclosure}{hours}{guards}{fallback}{scope}{media}{summary}{notify}{session}</form>'
+            f'<form id="f">{backend}{model}{webhook}{disclosure}{hours}{guards}{fallback}{scope}{media}{summary}{notify}{connect}{session}</form>'
             f'</div>'
             f'<div class="bar"><button type="button" id="save">Save</button>'
             f'<div id="out"></div></div>'
@@ -682,6 +697,31 @@ function collect() {
    phone and deletes the archive — so it needs a guard, but a native confirm()
    announces the domain in a system dialog the page cannot style, and reads as
    a browser warning rather than as this application asking. */
+/* Filled from the server: the page itself does not know the token, and
+   assembling the URL in two places is how they end up disagreeing. */
+(async () => {
+  const el = $("#mcpurl");
+  if (!el) return;
+  try {
+    const d = await (await fetch("/api/connect-info" + Q)).json();
+    el.value = d.mcp_url;
+  } catch (e) { el.value = "unavailable"; }
+})();
+
+const copyBtn = $("#copymcp");
+if (copyBtn) copyBtn.onclick = async () => {
+  const el = $("#mcpurl");
+  try {
+    await navigator.clipboard.writeText(el.value);
+  } catch (e) {
+    // Clipboard access needs a secure context; selecting it is the fallback
+    // that works everywhere and still saves the typing.
+    el.select();
+  }
+  copyBtn.textContent = "Copied";
+  setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
+};
+
 const signoutBtn = $("#signout");
 let armed = null;
 if (signoutBtn) signoutBtn.onclick = async () => {

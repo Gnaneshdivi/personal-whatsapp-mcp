@@ -68,6 +68,16 @@ History sync is not instant, and it matters more than it looks:
 The UI shows progress. On a busy account expect a few thousand messages and a
 couple of minutes.
 
+## Connecting an AI client
+
+**Settings → Connect an AI client** has the URL, with a copy button. That is
+the place to get it — the startup log prints it too, but a terminal you have
+closed is no help, and neither is one you never saw because it runs as a
+service.
+
+On this machine it needs no token. Reachable from elsewhere and the token is
+part of the URL, which makes that URL the whole credential.
+
 ## Configuration
 
 Everything is environment variables. Copy `.env.example` to `.env` in the

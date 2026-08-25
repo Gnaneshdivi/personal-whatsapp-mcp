@@ -322,6 +322,22 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
             "WhatsApp sends at that point, not what was here.</p></div>",
             headers=headers)
 
+    async def connect_info(request):
+        """The URL to paste into an AI client, assembled here.
+
+        Before this the only place it existed was a line in the server's own
+        startup log, so anyone who had closed that terminal — or was running it
+        as a service — had nowhere to look. You are signed in by the time you
+        can read this, so it is safe to show the token.
+        """
+        base = settings.public_base_url or f"http://{settings.host}:{settings.port}"
+        token = settings.auth_token
+        return JSONResponse({
+            "mcp_url": f"{base}/mcp" + (f"?k={token}" if token else ""),
+            "web_url": f"{base}/" + (f"?k={token}" if token else ""),
+            "needs_token": bool(token),
+        })
+
     async def settings_page(request):
         from .settings_ui import build
 
@@ -471,6 +487,7 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         Route("/api/status", status_api),
         Route("/settings", settings_page),
         Route("/logout", sign_out, methods=["GET", "POST"]),
+        Route("/api/connect-info", connect_info),
         Route("/api/settings", settings_api, methods=["POST"]),
         Route("/qr.txt", qr_txt),
         Route("/media/{mid}", media),

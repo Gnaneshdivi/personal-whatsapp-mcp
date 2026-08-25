@@ -525,7 +525,8 @@ async def _sign_in_page(send, scope, token_hint: str = "") -> None:
         '<input name="k" type="password" placeholder="Access token" '
         'autofocus autocomplete="current-password">'
         "<button type=submit>Sign in</button>"
-        "<p>It is remembered on this browser for 30 days.</p>"
+        "<p>It is remembered on this browser for 30 days. Once you are in, "
+        "Settings has the URL to paste into Claude or any MCP client.</p>"
         "</form>"
     ).encode()
     await send({"type": "http.response.start", "status": 401,
