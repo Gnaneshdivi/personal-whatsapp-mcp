@@ -76,3 +76,25 @@ def test_the_outgoing_bubble_class_is_not_shared_with_the_header():
     body = pathlib.Path("wa_mcp/ui.py").read_text()
     assert 'class="me"' not in body, \
         "only message bubbles may carry the `me` class"
+
+
+def test_every_class_the_page_renders_has_a_rule():
+    """Renaming a class in one place and not the other leaves it unstyled.
+
+    That is not a subtle failure here: the rail avatar lost its 34x34 box and
+    its overflow:hidden, so a profile photo rendered at natural size across the
+    whole window.
+    """
+    import pathlib
+    import re
+
+    from wa_mcp.ui import CSS
+
+    body = pathlib.Path("wa_mcp/ui.py").read_text()
+    rendered = set(re.findall(r'class="([a-z][a-z0-9 _-]*)"', body))
+    names = {c for group in rendered for c in group.split()}
+    # Layout-only wrappers and classes set from JS are out of scope.
+    ignore = {"sp", "wrap", "open", "hide", "sel", "on", "warn", "off"}
+    missing = sorted(n for n in names - ignore
+                     if not re.search(r"[.\s]%s[\s{.,:]" % re.escape(n), CSS))
+    assert not missing, f"rendered but unstyled: {missing}"

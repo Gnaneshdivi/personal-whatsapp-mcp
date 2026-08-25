@@ -57,10 +57,10 @@ button{font:inherit;cursor:pointer}
   color:#8696a0;font-size:19px;display:grid;place-items:center;position:relative}
 .rail button:hover{background:#202c33;color:#e9edef}
 .rail button.on{background:#2a3942;color:#00d9a5}
-.rail .me{width:34px;height:34px;border-radius:50%;overflow:hidden;background:#2a3942;
+.rail .me-av{width:34px;height:34px;border-radius:50%;overflow:hidden;background:#2a3942;
   display:grid;place-items:center;font-size:14px;font-weight:600;color:#8696a0;
   cursor:pointer;position:relative}
-.rail .me img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.rail .me-av img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 @media(max-width:820px){
   .app{grid-template-columns:52px 1fr}
   .pane{display:none}
@@ -136,6 +136,9 @@ button{font:inherit;cursor:pointer}
 .tk.rd{color:#53bdeb}
 .m img{max-width:100%;border-radius:6px;display:block;margin-bottom:4px}
 .m a{color:#53bdeb;text-decoration:underline}
+/* A chat address opens a conversation here rather than leaving the page, so it
+   is marked differently from a web link — same colour, dotted rule. */
+.m a.jl{text-decoration-style:dotted;cursor:pointer}
 .m.me a{color:#a7f3e4}
 .day{align-self:center;background:#182229;color:#8696a0;font-size:12px;
      padding:4px 12px;border-radius:10px;margin:12px 0 6px}
@@ -572,7 +575,7 @@ def shell(q: str) -> str:
     <button id="nav-chats" class="on" title="Chats">{icon("chats")}</button>
     <div class="sp"></div>
     <button id="nav-settings" title="Settings">{icon("settings")}</button>
-    <div class="whoami" id="nav-profile" title="Profile"></div>
+    <div class="me-av" id="nav-profile" title="Profile"></div>
   </div>
   <div class="list">
     <div class="lhead">
