@@ -137,6 +137,27 @@ class SQLiteStore(Store):
             await self._db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
             log.info("migrated: added %s.%s", table, column)
 
+    async def purge(self) -> dict[str, int]:
+        counts = {}
+        for table in ("messages", "chats", "kv"):
+            row = await (await self.db.execute(
+                f"SELECT COUNT(*) AS n FROM {table}")).fetchone()
+            counts[table] = int(row["n"])
+            await self.db.execute(f"DELETE FROM {table}")
+        # The FTS index is external-content: its triggers fire on delete, but
+        # rebuilding is what actually reclaims the space and guarantees no
+        # orphaned rows survive to be returned by a later search.
+        try:
+            await self.db.execute(
+                "INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+        except Exception:
+            pass
+        await self.db.commit()
+        # No VACUUM: it cannot run inside a transaction, and aiosqlite keeps
+        # one open, so it hangs rather than erroring. The rows are gone; the
+        # file staying its old size until SQLite reuses the pages is cosmetic.
+        return counts
+
     async def list_kv(self, prefix: str) -> list[str]:
         rows = await (await self.db.execute(
             "SELECT key FROM kv WHERE key LIKE ? ESCAPE '\\'",

@@ -458,3 +458,58 @@ async def test_revoking_also_signs_this_browser_out(client):
 async def test_the_settings_page_offers_revoking(client):
     page = (await client.get("/settings?k=t0ken")).text
     assert 'id="revoke"' in page and "Sign out everywhere" in page
+
+
+# ------------------------------------------------------------- logging out
+
+async def test_logout_clears_the_archive(client):
+    """An unlinked server holding somebody's conversations is stale,
+    unreachable, and still readable by anyone with the file."""
+    from wa_mcp.app import RT
+    from wa_mcp.store.base import Message
+
+    await RT.store.upsert_message(Message(
+        message_id="m1", chat_jid="1@s.whatsapp.net", ts=1, text="private",
+        is_from_me=False))
+    await RT.store.put_kv("trigger.settings", {"enabled": True})
+
+    out = (await rpc(client, "tools/call",
+                     {"name": "wa_logout", "arguments": {}}))["result"]
+    assert out["structuredContent"]["ok"] is True
+
+    assert await RT.store.search("private") == []
+    assert await RT.store.get_kv("trigger.settings") is None
+
+
+async def test_logout_can_keep_the_archive_if_asked(client):
+    from wa_mcp.app import RT
+    from wa_mcp.store.base import Message
+
+    await RT.store.upsert_message(Message(
+        message_id="m2", chat_jid="1@s.whatsapp.net", ts=1, text="kept",
+        is_from_me=False))
+
+    await rpc(client, "tools/call",
+              {"name": "wa_logout", "arguments": {"keep_history": True}})
+    assert await RT.store.search("kept") != []
+
+
+async def test_a_failed_unlink_still_clears_local_state(client, monkeypatch):
+    """Otherwise the data survives a logout the user believes succeeded."""
+    from wa_mcp.app import RT
+    from wa_mcp.store.base import Message
+
+    await RT.store.upsert_message(Message(
+        message_id="m3", chat_jid="1@s.whatsapp.net", ts=1, text="private",
+        is_from_me=False))
+
+    class Boom:
+        async def logout(self):
+            raise RuntimeError("socket gone")
+
+    monkeypatch.setattr(RT.wa, "_client", Boom())
+    out = (await rpc(client, "tools/call",
+                     {"name": "wa_logout", "arguments": {}}))["result"]
+    assert out["structuredContent"]["ok"] is True
+    assert "unlink_error" in out["structuredContent"]
+    assert await RT.store.search("private") == []

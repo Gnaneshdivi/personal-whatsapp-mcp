@@ -295,6 +295,14 @@ class MongoStore(Store):
 
     # -------------------------------------------------------------------- kv
 
+    async def purge(self) -> dict[str, int]:
+        counts = {}
+        for name in ("messages", "chats", "kv"):
+            coll = self.db[name]
+            counts[name] = await coll.count_documents({})
+            await coll.delete_many({})
+        return counts
+
     async def list_kv(self, prefix: str) -> list[str]:
         import re as _re
 

@@ -301,6 +301,15 @@ class PostgresStore(Store):
 
     # -------------------------------------------------------------------- kv
 
+    async def purge(self) -> dict[str, int]:
+        counts = {}
+        async with self.pool.acquire() as c:
+            for table in ("wa_messages", "wa_chats", "wa_kv"):
+                counts[table] = int(await c.fetchval(
+                    f"SELECT COUNT(*) FROM {table}"))
+                await c.execute(f"TRUNCATE {table}")
+        return counts
+
     async def list_kv(self, prefix: str) -> list[str]:
         async with self.pool.acquire() as c:
             rows = await c.fetch(

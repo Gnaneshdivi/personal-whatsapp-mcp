@@ -197,6 +197,16 @@ class Store(Protocol):
     async def get_kv(self, key: str) -> dict[str, Any] | None: ...
     async def put_kv(self, key: str, value: dict[str, Any]) -> None: ...
 
+    async def purge(self) -> dict[str, int]:
+        """Delete every message, chat and stored value. Returns what went.
+
+        Unlinking leaves a full copy of somebody's conversations on disk for an
+        account this server can no longer reach — stale, unreachable, and still
+        readable by anyone who gets the file. Logging out should leave nothing
+        behind.
+        """
+        ...
+
     async def list_kv(self, prefix: str) -> list[str]:
         """Keys beginning with `prefix`.
 

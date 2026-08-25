@@ -481,3 +481,33 @@ async def test_a_prefix_with_a_wildcard_is_not_a_pattern(store):
     await store.put_kv("a%b", {"x": 1})
     await store.put_kv("azzb", {"x": 1})
     assert await store.list_kv("a%b") == ["a%b"]
+
+
+async def test_purge_removes_everything_including_the_search_index(store):
+    """Logging out must leave nothing readable behind.
+
+    The FTS index is external-content, so rows deleted from `messages` can
+    still be returned by a search until it is rebuilt — a purge that left
+    message text findable would be worse than none, because it looks done.
+    """
+    for i in range(3):
+        await store.upsert_message(msg(f"m{i}", text=f"secret {i}"))
+    await store.upsert_chat_meta("1@s.whatsapp.net", name="Someone")
+    await store.put_kv("trigger.settings", {"enabled": True})
+
+    counts = await store.purge()
+    assert counts and sum(counts.values()) >= 4
+
+    assert await store.search("secret") == []
+    assert await store.list_chats(limit=10) == []
+    assert await store.get_kv("trigger.settings") is None
+    assert await store.get_messages("1@s.whatsapp.net") == []
+
+
+async def test_purge_leaves_the_store_usable(store):
+    """It is not a teardown — the same process pairs again afterwards."""
+    await store.upsert_message(msg("m1", text="before"))
+    await store.purge()
+    await store.upsert_message(msg("m2", text="after"))
+    rows = await store.get_messages("1@s.whatsapp.net")
+    assert [m.text for m in rows] == ["after"]

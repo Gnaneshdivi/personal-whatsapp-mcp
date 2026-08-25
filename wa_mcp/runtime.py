@@ -85,6 +85,7 @@ class Runtime:
             store=self.store,
             settings=self.settings,
             contacts=self.contacts,
+            session_is_file=self.storage.session_is_file,
             on_event=self._fanout,
         )
         blocked = self.wa.preflight()

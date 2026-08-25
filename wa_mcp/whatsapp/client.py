@@ -68,8 +68,12 @@ class WhatsApp:
 
     def __init__(self, *, session_dsn: str, store, settings,
                  contacts: ContactBook | None = None,
+                 session_is_file: bool = True,
                  on_event: Callable[[str, dict], Awaitable[None]] | None = None):
         self.session_dsn = session_dsn
+        # Whether the session is a file we may delete, or Postgres tables whose
+        # schema this process does not own.
+        self.session_is_file = session_is_file
         self.store = store
         self.settings = settings
         # `contacts or ContactBook(...)` is wrong: ContactBook defines
@@ -253,12 +257,57 @@ class WhatsApp:
             except Exception as exc:
                 log.warning("disconnect: %s", exc)
 
-    async def logout(self) -> dict[str, Any]:
-        if self._client is None:
-            raise NotConnected("not connected")
-        await self._client.logout()
+    async def logout(self, purge: bool = True) -> dict[str, Any]:
+        """Unlink the device and, by default, delete everything it collected.
+
+        Keeping the archive after unlinking leaves a full copy of somebody's
+        conversations on disk for an account this server can no longer reach.
+        It cannot be refreshed, cannot be corrected, and is still readable by
+        anyone who gets the file — so logging out clears it.
+
+        Irreversible either way: WhatsApp sends history exactly once, at pair
+        time, so what is deleted here cannot be fetched again by pairing.
+        """
+        out: dict[str, Any] = {"status": "logged_out"}
+        if self._client is not None:
+            try:
+                await self._client.logout()
+            except Exception as exc:
+                # An unlink that fails still has to clear local state, or the
+                # data survives a logout the user believes succeeded.
+                log.warning("unlink failed, clearing local state anyway: %s", exc)
+                out["unlink_error"] = str(exc)
         self.sync.logged_out()
-        return {"status": "logged_out"}
+        self.self_jid = ""
+        self.push_name = ""
+
+        if purge:
+            out["deleted"] = await self.store.purge()
+            out["session_cleared"] = self._clear_session()
+            self.contacts._names = {}
+        return out
+
+    def _clear_session(self) -> bool:
+        """Remove whatsmeow's own store, so no device identity is left behind.
+
+        Only when it is a file. On Postgres the session lives in tables this
+        process does not own the schema of, and dropping them is not ours to
+        do — the unlink above is what matters there.
+        """
+        from pathlib import Path
+
+        if not self.session_is_file:
+            return False
+        removed = False
+        base = Path(self.session_dsn)
+        for p in (base, Path(str(base) + "-wal"), Path(str(base) + "-shm")):
+            try:
+                if p.exists():
+                    p.unlink()
+                    removed = True
+            except Exception as exc:
+                log.warning("could not remove %s: %s", p, exc)
+        return removed
 
     async def _settle_loop(self) -> None:
         """Drives SyncTracker.tick(), which closes a sync that never completed."""

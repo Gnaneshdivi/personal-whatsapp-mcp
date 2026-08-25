@@ -195,10 +195,21 @@ async def wa_pair() -> dict[str, Any]:
 
 
 @mcp.tool
-async def wa_logout() -> dict[str, Any]:
-    """Unlink the device. History is kept; the number must be paired again."""
+async def wa_logout(keep_history: bool = False) -> dict[str, Any]:
+    """Unlink the device and delete everything it collected.
+
+    IRREVERSIBLE. WhatsApp sends history exactly once, at pair time, so what
+    this deletes cannot be fetched again by pairing — the archive starts empty.
+
+    Clears messages, chats, settings and the local session by default: an
+    unlinked server holding a full copy of somebody's conversations is stale,
+    unreachable and still readable by anyone with the file.
+
+    `keep_history=True` unlinks only. Ask the user first either way; nothing
+    about this is recoverable.
+    """
     try:
-        return {"ok": True, **await rt().wa.logout()}
+        return {"ok": True, **await rt().wa.logout(purge=not keep_history)}
     except Exception as exc:
         return _fail(exc)
 
