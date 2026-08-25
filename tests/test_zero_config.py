@@ -99,21 +99,40 @@ async def test_a_configured_token_is_never_replaced(monkeypatch, tmp_path):
         assert settings.auth_token == "mine"
 
 
-def test_the_generated_token_survives_a_restart(tmp_path, monkeypatch):
-    """A fresh one per run breaks every connector URL on every restart, and
-    the person has to go and find the new one."""
-    monkeypatch.setenv("WA_DATA_DIR", str(tmp_path))
-    from wa_mcp.app import _persistent_token
+async def test_the_generated_token_is_kept_in_the_store(tmp_path, monkeypatch):
+    """In the database, not a file beside it.
 
-    first = _persistent_token()
-    assert first and _persistent_token() == first
-    assert (tmp_path / "access-token").read_text().strip() == first
+    Everything else that survives a restart lives there, it moves with the
+    deployment when the store is Postgres, and a stray credential file next to
+    the data is one more thing to find and protect.
+    """
+    monkeypatch.delenv("WA_DATABASE_URL", raising=False)
+    from wa_mcp.app import TOKEN_KEY, _stored_token
+    from wa_mcp.runtime import build_store
+
+    store = build_store(resolve_storage("", tmp_path))
+    await store.connect()
+    try:
+        first = await _stored_token(store)
+        assert first
+        assert await _stored_token(store) == first, "a new one on every start"
+        row = await store.get_kv(TOKEN_KEY)
+        assert row["token"] == first
+    finally:
+        await store.close()
+
+    assert not (tmp_path / "access-token").exists(), "left a credential on disk"
 
 
-def test_the_token_file_is_not_world_readable(tmp_path, monkeypatch):
-    """It is the whole account."""
-    monkeypatch.setenv("WA_DATA_DIR", str(tmp_path))
-    from wa_mcp.app import _persistent_token
-
-    _persistent_token()
-    assert oct((tmp_path / "access-token").stat().st_mode)[-3:] == "600"
+async def test_a_tunnelled_server_has_a_token_by_the_time_it_serves(
+        monkeypatch, tmp_path):
+    """It is created during startup, after the store opens. Nothing may be
+    served before that happens."""
+    mgr, settings = await _app(monkeypatch, tmp_path,
+                               PUBLIC_BASE_URL="https://x.ngrok.io")
+    async with mgr as m:
+        assert settings.auth_token
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=m.app),
+                                     base_url="http://t") as c:
+            r = await c.get("/api/status")
+            assert r.status_code == 401

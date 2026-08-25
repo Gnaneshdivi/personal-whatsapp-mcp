@@ -57,6 +57,9 @@ class Runtime:
         self._subscribers: list = []
         self._have_history = False   # set in start(); see status()
         self._summary_task = None
+        # Set by create_app when a token has to be created at
+        # startup; the store is not open before then.
+        self.pending_auth = None
 
     # ------------------------------------------------------------- lifecycle
 

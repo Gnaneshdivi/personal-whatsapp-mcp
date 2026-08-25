@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import re
 import secrets
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -393,6 +394,9 @@ async def wa_check_number(phone: str) -> dict[str, Any]:
         return _fail(exc)
 
 
+TOKEN_KEY = "auth.generated_token"
+
+
 # ============================================================== plumbing
 
 class Auth:
@@ -586,6 +590,21 @@ def create_app(settings: Settings, storage: Storage):
     @asynccontextmanager
     async def lifespan(a):
         await RT.start()
+
+        auth = getattr(RT, "pending_auth", None)
+        if auth is not None and not auth.token:
+            auth.token = await _stored_token(RT.store)
+            settings.__dict__["auth_token"] = auth.token
+            base = (settings.public_base_url
+                    or f"http://{settings.host}:{settings.port}")
+            log.warning(
+                "\n"
+                "  Reachable from other machines, so access needs a token.\n\n"
+                "  Open this:      %s/?k=%s\n"
+                "  Connect MCP to: %s/mcp?k=%s\n\n"
+                "  The same one after a restart. Set WA_AUTH_TOKEN to choose "
+                "your own, or WA_ALLOW_OPEN=1 for none.\n",
+                base, auth.token, base, auth.token)
         try:
             async with prior_lifespan(a):
                 yield
@@ -615,66 +634,45 @@ def create_app(settings: Settings, storage: Storage):
     # Reachable from elsewhere is a different thing. The whole point of this is
     # to put it behind a tunnel so Claude can reach it, and that URL is on the
     # public internet — ngrok subdomains get scanned. Open there means whoever
-    # finds it reads every message and can send as you, so a token is generated
-    # rather than left off. Nobody has to choose one; it is printed at startup.
+    # finds it reads every message and can send as you, so one is created
+    # rather than left off. Nobody has to choose it.
     if _is_reachable_from_elsewhere(settings):
         if settings.allow_open:
             log.warning("WA_ALLOW_OPEN=1 — reachable from other machines with "
                         "NO authentication. Anyone who finds the URL can read "
                         "and send on this WhatsApp account.")
             return scoped
-        token = _persistent_token()
-        settings.__dict__["auth_token"] = token
-        base = settings.public_base_url or f"http://{settings.host}:{settings.port}"
-        log.warning(
-            "\n"
-            "  Reachable from other machines, so access needs a token.\n"
-            "  Kept in %s — the same one after a restart.\n\n"
-            "  Open this:      %s/?k=%s\n"
-            "  Connect MCP to: %s/mcp?k=%s\n\n"
-            "  Set WA_AUTH_TOKEN to choose your own, or WA_ALLOW_OPEN=1 for none.\n",
-            _token_path(), base, token, base, token)
-        return Auth(scoped, token, rt=RT,
-                    token_hint=f"The token is printed when the server starts, "
-                               f"and kept in {_token_path()}")
+        # Created in the store during startup, not here: the store is not open
+        # yet, and it is where everything else that has to survive a restart
+        # lives. Auth is built now with no token and given one before the first
+        # request is served — nothing is listening in between.
+        auth = Auth(scoped, "", rt=RT,
+                    token_hint="The token is shown in the log when the server "
+                               "starts.")
+        RT.pending_auth = auth
+        return auth
 
     log.info("no token set — open on %s, which only this machine can reach",
              settings.host)
     return scoped
 
 
-def _token_path():
-    from .config import data_dir
+async def _stored_token(store) -> str:
+    """The generated token, kept in the store.
 
-    return data_dir() / "access-token"
+    In the database rather than a file beside it: everything else that has to
+    survive a restart lives there, it moves with the deployment when the store
+    is Postgres, and a stray credential file next to the data is one more thing
+    to find and protect.
 
-
-def _persistent_token() -> str:
-    """The generated token, kept across restarts.
-
-    A fresh one per run means every connector URL breaks whenever the process
-    restarts — which for a self-hosted thing is often — and the person has to
-    go and find the new one. Written next to the database so it can always be
-    read back, with 0600 because it is the whole account.
+    A fresh one per run would break every connector URL on every restart, which
+    for something self-hosted is constantly.
     """
-    path = _token_path()
-    try:
-        existing = path.read_text().strip()
-        if existing:
-            return existing
-    except FileNotFoundError:
-        pass
-    except Exception as exc:
-        log.warning("could not read %s: %s", path, exc)
-
+    row = await store.get_kv(TOKEN_KEY)
+    if row and row.get("token"):
+        return str(row["token"])
     token = secrets.token_urlsafe(32)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(token + "\n")
-        path.chmod(0o600)
-    except Exception as exc:
-        # Still usable this run; it just will not survive a restart.
-        log.warning("could not save the token to %s: %s", path, exc)
+    await store.put_kv(TOKEN_KEY, {"token": token, "created": time.time()})
     return token
 
 

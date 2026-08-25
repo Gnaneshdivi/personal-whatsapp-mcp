@@ -17,7 +17,7 @@ UI; this page is the same information, written down.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `WA_AUTH_TOKEN` | — | Not needed on loopback, where it runs open. Generated and printed when reachable from elsewhere. `MCP_AUTH_TOKEN` is an alias. |
+| `WA_AUTH_TOKEN` | — | Not needed on loopback, where it runs open. Created in the database and shown at startup when reachable from elsewhere, and stable across restarts. `MCP_AUTH_TOKEN` is an alias. |
 | `WA_ALLOW_OPEN` | `0` | Run with no authentication even when reachable. Only for a network you trust. |
 | `PUBLIC_BASE_URL` | — | Tells the server it is reachable from elsewhere, so it protects itself and prints the right link. Set it to the tunnel's address. |
 | `WA_HOST` | `127.0.0.1` | In Docker this must be `0.0.0.0` or nothing outside the container can reach it. |
