@@ -608,3 +608,75 @@ async def test_a_plain_text_send_records_no_media(store, tmp_path, monkeypatch):
     await wa._record(Jid(), Resp(), "hello", "text")
     row = await store.get_message("OUT2")
     assert row.media_meta == {} and row.media_ref is None
+
+
+# ------------------------------------------------- adopting a self-set name
+
+def _wa(store, tmp_path, names=None):
+    from wa_mcp.config import Settings
+    from wa_mcp.whatsapp.client import WhatsApp
+    from wa_mcp.whatsapp.contacts import ContactBook
+
+    book = ContactBook(str(tmp_path / "session.db"))
+    book._names = dict(names or {})
+    wa = WhatsApp(session_dsn=str(tmp_path / "session.db"), store=store,
+                  settings=Settings(), contacts=book)
+    wa.self_jid = "me@s.whatsapp.net"
+    return wa
+
+
+class _Src:
+    def __init__(self, from_me=False):
+        self.IsFromMe = from_me
+
+
+async def _name_of(store, jid):
+    """A chat with nothing worth storing may not have a row at all."""
+    chat = await store.get_chat(jid)
+    return getattr(chat, "name", None) or None
+
+
+async def test_a_chat_with_no_name_takes_the_senders_own(store, tmp_path):
+    wa = _wa(store, tmp_path)
+    await store.upsert_chat_meta("1@s.whatsapp.net")
+    await wa._adopt_push_name("1@s.whatsapp.net", _Src(), "Asif")
+    assert (await store.get_chat("1@s.whatsapp.net")).name == "Asif"
+
+
+async def test_a_masked_number_is_replaced(store, tmp_path):
+    """WhatsApp sends "+91∙∙∙∙∙∙∙∙88" as the name of a chat whose contact card
+    it will not share. Stored, it is worse than no name."""
+    wa = _wa(store, tmp_path)
+    await store.upsert_chat_meta("1@s.whatsapp.net", name="+91∙∙∙∙∙∙∙∙88")
+    await wa._adopt_push_name("1@s.whatsapp.net", _Src(), "Asif")
+    assert (await store.get_chat("1@s.whatsapp.net")).name == "Asif"
+
+
+async def test_a_name_the_owner_saved_always_wins(store, tmp_path):
+    wa = _wa(store, tmp_path, {"1@s.whatsapp.net": "Asif Bhai"})
+    await store.upsert_chat_meta("1@s.whatsapp.net")
+    await wa._adopt_push_name("1@s.whatsapp.net", _Src(), "asif🔥")
+    assert await _name_of(store, "1@s.whatsapp.net") is None
+
+
+async def test_an_existing_real_name_is_not_overwritten(store, tmp_path):
+    wa = _wa(store, tmp_path)
+    await store.upsert_chat_meta("1@s.whatsapp.net", name="Accounts")
+    await wa._adopt_push_name("1@s.whatsapp.net", _Src(), "asif🔥")
+    assert (await store.get_chat("1@s.whatsapp.net")).name == "Accounts"
+
+
+async def test_a_group_never_takes_a_members_name(store, tmp_path):
+    """In a group the push name belongs to whoever sent that message. Adopting
+    it renames the group after the last person who spoke."""
+    wa = _wa(store, tmp_path)
+    await store.upsert_chat_meta("123-456@g.us")
+    await wa._adopt_push_name("123-456@g.us", _Src(), "Asif")
+    assert await _name_of(store, "123-456@g.us") is None
+
+
+async def test_our_own_name_is_not_written_onto_their_chat(store, tmp_path):
+    wa = _wa(store, tmp_path)
+    await store.upsert_chat_meta("1@s.whatsapp.net")
+    await wa._adopt_push_name("1@s.whatsapp.net", _Src(from_me=True), "Gnanesh")
+    assert await _name_of(store, "1@s.whatsapp.net") is None
