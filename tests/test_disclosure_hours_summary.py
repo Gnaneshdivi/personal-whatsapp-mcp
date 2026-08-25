@@ -326,3 +326,88 @@ def test_the_instruction_forbids_guessing_and_mirroring():
     assert "do NOT guess" in out
     assert "Half an answer is worse than none" in out
     assert "[[NOTIFY]]" in out
+
+
+# ------------------------------------------------------ groups are a podium
+
+async def test_group_chatter_is_not_treated_as_a_request(rt):
+    """A summary said "someone is asking you to check the CCTV footage".
+
+    Neighbours were talking among themselves. In a group almost nothing is for
+    you, and inventing a request out of the room is worse than reporting
+    nothing — you act on it.
+    """
+    from wa_mcp.store.base import Message
+    from wa_mcp.trigger.summary import addressed_to_me
+
+    rt.wa.self_jid = "919100828649@s.whatsapp.net"
+    m = Message(message_id="g1", chat_jid="1@g.us", ts=1,
+                text="I feel washing of vehicles should be stopped", is_from_me=False)
+    assert await addressed_to_me(rt, m, "919100828649") is False
+
+
+async def test_a_shouty_broadcast_is_still_not_yours(rt):
+    """Keyword matching alone would have promoted this one."""
+    from wa_mcp.store.base import Message
+    from wa_mcp.trigger.summary import addressed_to_me
+
+    m = Message(message_id="g2", chat_jid="1@g.us", ts=1,
+                text="URGENT WATER CONSERVATION NOTICE", is_from_me=False)
+    assert await addressed_to_me(rt, m, "919100828649") is False
+
+
+async def test_being_mentioned_makes_it_yours(rt):
+    """WhatsApp writes a mention into the text as @<number>."""
+    from wa_mcp.store.base import Message
+    from wa_mcp.trigger.summary import addressed_to_me
+
+    m = Message(message_id="g3", chat_jid="1@g.us", ts=1,
+                text="@919100828649 bhai. Please review.", is_from_me=False)
+    assert await addressed_to_me(rt, m, "919100828649") is True
+
+
+async def test_a_reply_to_something_you_said_makes_it_yours(rt):
+    from wa_mcp.store.base import Message
+    from wa_mcp.trigger.summary import addressed_to_me
+
+    await rt.store.upsert_message(Message(
+        message_id="mine", chat_jid="1@g.us", ts=1, text="I will check",
+        is_from_me=True))
+    m = Message(message_id="g4", chat_jid="1@g.us", ts=2,
+                text="It has to be credited from finance", is_from_me=False,
+                quoted_id="mine")
+    assert await addressed_to_me(rt, m, "919100828649") is True
+
+
+async def test_a_reply_to_someone_else_is_not_yours(rt):
+    """Quoting is only a signal when what was quoted was yours."""
+    from wa_mcp.store.base import Message
+    from wa_mcp.trigger.summary import addressed_to_me
+
+    await rt.store.upsert_message(Message(
+        message_id="theirs", chat_jid="1@g.us", ts=1, text="anyone free?",
+        is_from_me=False))
+    m = Message(message_id="g5", chat_jid="1@g.us", ts=2, text="yes",
+                is_from_me=False, quoted_id="theirs")
+    assert await addressed_to_me(rt, m, "919100828649") is False
+
+
+async def test_direct_chats_are_never_filtered(rt):
+    """Everything someone sends you privately is for you by definition."""
+    import time as _t
+
+    from wa_mcp.store.base import Message
+    from wa_mcp.trigger.settings import TriggerSettings
+    from wa_mcp.trigger.summary import collect
+
+    rt.wa.self_jid = "919100828649@s.whatsapp.net"
+    ts = int(_t.time() * 1000)
+    await rt.store.upsert_chat_meta("911@s.whatsapp.net", name="Asif")
+    await rt.store.upsert_message(Message(
+        message_id="d1", chat_jid="911@s.whatsapp.net", ts=ts,
+        text="no mention, no quote", is_from_me=False))
+    await rt.store.touch_chat("911@s.whatsapp.net", ts, False, "x")
+
+    s = TriggerSettings.from_dict({"summary": {"enabled": True}})
+    body, n = await collect(rt, ts - 1000, s)
+    assert n == 1 and "no mention, no quote" in body

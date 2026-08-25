@@ -38,6 +38,9 @@ where someone:
   - asks a direct question that has not been answered
   - is waiting on a reply, a decision, a file, a payment or a date
   - chases something asked about before
+Group chats only appear here when {me_name} was mentioned or someone replied to
+them, so read those as directed at {me_name} — but general chatter that merely
+happens to name them is still not a request.
 Each bullet: who, what they want, and the deadline if one was given. Quote the
 few words that make the ask concrete. Be specific — "Akbar wants the beta
 account set up for Shiwani" beats "Akbar had a request".
@@ -85,6 +88,26 @@ def _trim(text: str) -> str:
     return t if len(t) <= PER_MESSAGE else t[:PER_MESSAGE] + "…"
 
 
+async def addressed_to_me(rt, m, self_user: str) -> bool:
+    """Whether a group message is aimed at the owner rather than the room.
+
+    In a group, almost nothing is for you. A summary that treats every message
+    as a possible request produces "someone is asking you to check the CCTV
+    footage" out of neighbours talking among themselves — which is worse than
+    no summary, because you act on it.
+
+    Two things make it yours: being mentioned, which WhatsApp writes into the
+    text as @<number>, or someone replying to something you said.
+    """
+    if self_user and f"@{self_user}" in (m.text or ""):
+        return True
+    if m.quoted_id:
+        quoted = await rt.store.get_message(m.quoted_id)
+        if quoted is not None and quoted.is_from_me:
+            return True
+    return False
+
+
 async def collect(rt, since_ms: int, s) -> tuple[str, int]:
     """Inbound messages since `since_ms`, grouped by chat. Returns (text, count).
 
@@ -93,12 +116,21 @@ async def collect(rt, since_ms: int, s) -> tuple[str, int]:
     turns are the ones an ask is likely to be in.
     """
     book = rt.contacts
+    self_user = (getattr(rt.wa, "self_jid", "") or "").split("@")[0].split(":")[0]
     lines, total, size = [], 0, 0
     for chat in await rt.store.list_chats(limit=s.summary.max_chats * 5):
         if chat.is_group and not s.summary.include_groups:
             continue
         rows = [m for m in await rt.store.get_messages(chat.chat_jid, limit=60)
-                if not m.is_from_me and m.text and m.ts > since_ms][:PER_CHAT]
+                if not m.is_from_me and m.text and m.ts > since_ms]
+        if chat.is_group:
+            # A group is a podium. Only what is aimed at you belongs here.
+            keep = []
+            for m in rows:
+                if await addressed_to_me(rt, m, self_user):
+                    keep.append(m)
+            rows = keep
+        rows = rows[:PER_CHAT]
         if not rows:
             continue
         name = book.display_name(chat.chat_jid, chat_name=chat.name)
