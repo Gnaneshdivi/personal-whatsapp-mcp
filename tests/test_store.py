@@ -351,7 +351,7 @@ async def test_a_sent_message_starts_at_sent(store):
     assert m.status == "sent" and m.public()["status"] == "sent"
 
 
-async def test_a_new_column_migrates_instead_of_needing_a_wipe(tmp_path):
+async def test_a_new_column_migrates_instead_of_a_rebuild(tmp_path):
     """The alternative was taken once and cost 6,225 messages: the database was
     deleted to pick up a new column, and history sync only runs at pair time so
     it could not be recovered. Additive migration is the difference between an

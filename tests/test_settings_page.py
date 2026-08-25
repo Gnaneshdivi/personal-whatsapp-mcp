@@ -134,7 +134,7 @@ async def test_guardrails_and_notify_are_persisted_not_defaulted(client):
     assert n.jid == "919100828649"
 
 
-async def test_the_masked_key_does_not_wipe_the_real_one(client):
+async def test_the_masked_key_does_not_replace_the_real_one(client):
     """The form renders *** rather than the key, and posts it back unchanged."""
     await client.post(f"/api/settings{K}", json=FULL)
     masked = json.loads(json.dumps(FULL))

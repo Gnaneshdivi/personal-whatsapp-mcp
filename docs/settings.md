@@ -176,12 +176,12 @@ appear in the UI only when it is on.
 
 ## Log out
 
-One control, and it does everything: unlinks WhatsApp, deletes every message,
-chat and setting, and expires every credential this server issued — connectors,
-routine tokens, pending hand-off tokens.
+One control. It unlinks WhatsApp and removes everything stored here: messages,
+chats, settings, and every credential this server issued — connectors, routine
+tokens, pending hand-off tokens.
 
-**Not reversible.** WhatsApp sends history once, at pair time, so pairing again
-starts with an empty archive rather than this one.
+This cannot be undone. WhatsApp sends history once, at pair time, so pairing
+again starts with an empty archive rather than this one.
 
 `WA_AUTH_TOKEN` survives, because it comes from the environment and is
 re-registered on every start; revoking it would lock you out until a restart

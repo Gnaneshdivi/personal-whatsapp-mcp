@@ -313,16 +313,17 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
                 await rt.store.put_kv(key, {"expires_at": 0})
                 revoked += 1
 
-        wiped: dict = {}
+        result: dict = {}
         try:
-            wiped = await rt.wa.logout(purge=True)
+            result = await rt.wa.logout(purge=True)
         except Exception as exc:
             # Never connected, or the socket is already gone. The data still
             # has to go, or a logout the user watched succeed leaves it there.
             log.warning("unlink failed, purging anyway: %s", exc)
-            wiped = {"unlink_error": str(exc), "deleted": await rt.store.purge()}
+            result = {"unlink_error": str(exc),
+                      "deleted": await rt.store.purge()}
 
-        deleted = wiped.get("deleted") or {}
+        deleted = result.get("deleted") or {}
         log.warning("logged out: %d credential(s) revoked, %s deleted",
                     revoked, deleted)
 
@@ -340,8 +341,8 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
             "display:grid;place-items:center;height:100vh;margin:0;text-align:center}"
             "p{color:#8696a0;max-width:40ch}a{color:#00a884}</style>"
             f"<div><h2>Logged out</h2><p>WhatsApp is unlinked. {n} message(s) "
-            f"and {revoked} credential(s) were deleted.</p>"
-            "<p>Pair again to start over — the history will be whatever "
+            f"and {revoked} credential(s) were removed.</p>"
+            "<p>Pair again to start over. The history will be whatever "
             "WhatsApp sends at that point, not what was here.</p></div>",
             headers=headers)
 

@@ -576,14 +576,15 @@ def build(rt, q: str, status: dict) -> str:
     # One control that does the whole thing. Anything less left something
     # behind that the person clicking it believed was gone.
     session = section("Log out", (
-        row("Log out and wipe everything",
+        row("Log out",
             '<button type="button" class="ghost sm" id="signout">Log out</button>',
-            "Unlinks WhatsApp, deletes every message, chat and setting, and "
-            "expires every credential this server issued.\n\nThis cannot be "
-            "undone. WhatsApp sends history once, at pair time — pairing again "
-            "starts with an empty archive, not this one.\n\nYour "
-            "WA_AUTH_TOKEN still works; it comes from the environment.",
-            hint="Unlinks the phone and deletes everything. Not reversible.")
+            "Unlinks WhatsApp and removes everything stored here: messages, "
+            "chats, settings, and every credential this server issued.\n\n"
+            "This cannot be undone. WhatsApp sends history once, at pair time, "
+            "so pairing again starts with an empty archive rather than this "
+            "one.\n\nYour WA_AUTH_TOKEN still works; it comes from the "
+            "environment.",
+            hint="Unlinks the phone and removes everything stored here.")
     ))
 
     body = (f'<div class="wrap"><a href="/{q}">&larr; Back to chats</a>'
@@ -685,7 +686,7 @@ const signoutBtn = $("#signout");
 let armed = null;
 if (signoutBtn) signoutBtn.onclick = async () => {
   if (!armed) {
-    signoutBtn.textContent = "Click again to wipe everything";
+    signoutBtn.textContent = "Click again to confirm";
     signoutBtn.classList.add("danger");
     // Disarms itself, so a click left forgotten in a tab does not sign you
     // out when you come back to it.

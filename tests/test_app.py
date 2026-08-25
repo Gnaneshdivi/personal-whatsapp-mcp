@@ -402,7 +402,7 @@ async def test_the_cleared_cookie_expires_rather_than_being_empty(noauth_client)
     assert after.status_code == 401
 
 
-async def test_logging_out_wipes_the_archive(client):
+async def test_logging_out_removes_the_archive(client):
     """One action, deliberately. Anything less left something behind that the
     person clicking it believed was gone."""
     from wa_mcp.app import RT
@@ -432,8 +432,8 @@ async def test_the_settings_page_offers_one_log_out(client):
     page = (await client.get("/settings?k=t0ken")).text
     assert 'id="signout"' in page
     assert page.count(">Log out</button>") == 1
-    assert "Log out and wipe everything" in page
-    assert "Not reversible" in page
+    assert page.count(">Log out</button>") == 1
+    assert "cannot be undone" in page
 
 
 # ------------------------------------------------------ signing out everywhere
@@ -546,7 +546,7 @@ async def test_sign_out_confirms_in_the_page_not_in_a_system_dialog(client):
     # The call form, not the word — a comment explaining why it is gone
     # would otherwise fail this.
     assert 'confirm("' not in page and "confirm('" not in page
-    assert "Click again to wipe everything" in page
+    assert "Click again to confirm" in page
 
 
 async def test_logout_is_not_intercepted_by_the_cookie_trade(client):

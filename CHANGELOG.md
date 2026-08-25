@@ -22,7 +22,7 @@ First release intended for anyone other than its author.
 - OAuth, so an MCP client authenticates by scanning the QR.
 
 ### Behaviour worth knowing
-- **Log out wipes everything**: it unlinks WhatsApp, deletes messages, chats
+- **Log out removes everything**: it unlinks WhatsApp, deletes messages, chats
   and settings, and revokes every issued credential. History syncs once at pair
   time, so this cannot be undone by pairing again.
 
