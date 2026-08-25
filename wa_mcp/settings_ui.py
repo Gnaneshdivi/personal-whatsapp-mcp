@@ -572,28 +572,18 @@ def build(rt, q: str, status: dict) -> str:
             "which is the useful case: watch a number without answering on it. "
             "The alerts about replies appear only once auto-reply is on.")
 
-    # Its own section at the end: a destructive-looking control next to the
-    # reply settings invites a misclick, and this one is only the browser.
-    session = section("This browser", (
-        row("Signed in", '<a class="ghost sm" href="/logout" '
-                         'style="text-decoration:none;padding:6px 12px;'
-                         'border:1px solid #3b4a54;border-radius:8px;'
-                         'color:#e9edef">Sign out</a>',
-            "Clears the session cookie, so this browser has to present the "
-            "token again.\n\nWhatsApp stays linked and nothing is deleted — "
-            "this is not unlinking the phone.",
-            hint="WhatsApp stays linked; only this browser signs out.")
-        + row("All other clients",
-              '<button type="button" class="ghost sm" id="revoke">'
-              'Sign out everywhere</button>',
-              "Expires every token this server has issued — MCP connectors, "
-              "routine tokens, and any pending hand-off tokens. They will have "
-              "to authenticate again.\n\nYour own WA_AUTH_TOKEN is not "
-              "affected: it comes from the environment and is re-registered on "
-              "every start, so revoking it would lock you out until a restart "
-              "and do nothing after one.\n\nWhatsApp stays linked.",
-              hint="Connectors keep working after a browser sign-out — this is "
-                   "what stops them.")
+    # One control. Two of them read as "the browser one is the safe option",
+    # and the safe option left connectors with full access for thirty days.
+    session = section("Session", (
+        row("Sign out of everything",
+            '<button type="button" class="ghost sm" id="signout">Sign out</button>',
+            "Signs this browser out and expires every credential this server "
+            "has issued — MCP connectors, routine tokens, pending hand-off "
+            "tokens. Each has to authenticate again.\n\nYour WA_AUTH_TOKEN is "
+            "not affected; it comes from the environment.\n\nWhatsApp stays "
+            "linked and no messages are deleted — unlinking is a different "
+            "thing, and it costs the archive.",
+            hint="This browser and every connector. WhatsApp stays linked.")
     ))
 
     body = (f'<div class="wrap"><a href="/{q}">&larr; Back to chats</a>'
@@ -687,19 +677,17 @@ function collect() {
   return o;
 }
 
-const revokeBtn = $("#revoke");
-if (revokeBtn) revokeBtn.onclick = async () => {
-  if (!confirm("Sign out every connector and routine?\n\n"
-               + "They will each have to authenticate again. WhatsApp stays "
-               + "linked and nothing is deleted.")) return;
-  show("Revoking…");
+const signoutBtn = $("#signout");
+if (signoutBtn) signoutBtn.onclick = async () => {
+  if (!confirm("Sign out this browser and every connector?\n\n"
+               + "Each will have to authenticate again. WhatsApp stays linked "
+               + "and no messages are deleted.")) return;
+  // POST, not a link: a GET that revokes can be fired by a prefetcher or a
+  // link scanner without anyone clicking it.
   try {
-    const r = await fetch("/api/revoke-all" + Q, {method: "POST"});
-    const d = await r.json();
-    show(d.ok ? `Signed out ${d.revoked} credential(s). This browser too — `
-                + "reload with your token."
-              : "Failed: " + (d.error || r.status), d.ok);
-  } catch (e) { show("Failed: " + e.message, false); }
+    await fetch("/logout" + Q, {method: "POST"});
+  } catch (e) {}
+  location.href = "/logout" + Q;
 };
 
 $("#save").onclick = async () => {

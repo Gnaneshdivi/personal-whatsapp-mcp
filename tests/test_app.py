@@ -403,23 +403,27 @@ async def test_the_cleared_cookie_expires_rather_than_being_empty(noauth_client)
 
 
 async def test_signing_out_does_not_unlink_whatsapp(noauth_client):
-    """Only the browser session. History syncs once, at pair time — a control
-    that could cost the archive must not sit next to the reply settings."""
+    """History syncs once, at pair time — a control that could cost the
+    archive must not be the one labelled "sign out"."""
     body = (await noauth_client.get("/logout",
-                                    headers={"Cookie": "wa_session=t0ken"})).text
+                                    headers={"Cookie": "wa_session=t0ken",
+                                             "Accept": "text/html"})).text
     assert "still linked" in body
     assert "nothing has been deleted" in body
 
 
-async def test_the_settings_page_offers_it(client):
+async def test_the_settings_page_offers_one_sign_out(client):
+    """One control. Two read as "the browser one is the safe option", and the
+    safe option left connectors with full access for thirty days."""
     page = (await client.get("/settings?k=t0ken")).text
-    assert 'href="/logout"' in page
-    assert "Sign out" in page
+    assert 'id="signout"' in page
+    assert page.count(">Sign out</button>") == 1
+    assert "Sign out of everything" in page
 
 
 # ------------------------------------------------------ signing out everywhere
 
-async def test_revoking_expires_issued_credentials(client):
+async def test_signing_out_expires_issued_credentials(client):
     """A browser sign-out leaves connectors untouched.
 
     An OAuth token lasts 30 days and a routine token never expires, so without
@@ -433,31 +437,36 @@ async def test_revoking_expires_issued_credentials(client):
     b = await mint_routine(RT.store)
     assert await load(RT.store, a) and await load(RT.store, b)
 
-    r = await client.post("/api/revoke-all?k=t0ken")
+    r = await client.post("/logout?k=t0ken")
     assert r.json()["ok"] is True and r.json()["revoked"] >= 2
 
     assert await load(RT.store, a) is None
     assert await load(RT.store, b) is None
 
 
-async def test_revoking_spares_the_configured_token(client):
+async def test_signing_out_spares_the_configured_token(client):
     """It comes from the environment and is re-registered on every start.
 
     Revoking it would lock you out until a restart and do nothing after one.
     """
-    await client.post("/api/revoke-all?k=t0ken")
+    await client.post("/logout?k=t0ken")
     r = await client.get("/api/status?k=t0ken")
     assert r.status_code == 200
 
 
-async def test_revoking_also_signs_this_browser_out(client):
-    r = await client.post("/api/revoke-all?k=t0ken")
+async def test_signing_out_also_clears_this_browser(client):
+    r = await client.post("/logout?k=t0ken")
     assert "Max-Age=0" in r.headers["set-cookie"]
 
 
-async def test_the_settings_page_offers_revoking(client):
-    page = (await client.get("/settings?k=t0ken")).text
-    assert 'id="revoke"' in page and "Sign out everywhere" in page
+async def test_signing_out_reports_how_many(client):
+    """Silence would leave you wondering whether it did anything."""
+    from wa_mcp.delivery import mint
+
+    await mint(__import__("wa_mcp.app", fromlist=["RT"]).RT.store,
+               "1@s.whatsapp.net", 300)
+    r = await client.post("/logout?k=t0ken")
+    assert r.json()["revoked"] >= 1
 
 
 # ------------------------------------------------------------- logging out

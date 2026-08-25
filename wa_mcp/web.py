@@ -287,42 +287,19 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         return JSONResponse({"redirect": back})
 
     async def sign_out(request):
-        """Clear the session cookie and ask for the token again.
+        """Sign out: this browser and every credential this server issued.
 
-        Only the browser session — the WhatsApp device stays linked and every
-        message stays where it is. Unlinking is a different thing entirely and
-        is not a button, because history syncs once at pair time and cannot be
-        fetched again.
-        """
-        # Max-Age=0 rather than an empty value: an empty cookie still presents
-        # itself and would fail auth on every request instead of falling back
-        # to asking for the token.
-        headers = {"Set-Cookie": "wa_session=; Path=/; HttpOnly; SameSite=Lax; "
-                                 "Max-Age=0",
-                   "Cache-Control": "no-store"}
-        return HTMLResponse(
-            "<!doctype html><meta charset=utf-8><title>Signed out</title>"
-            "<style>body{background:#0b141a;color:#e9edef;font:15px/1.6 "
-            "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;"
-            "display:grid;place-items:center;height:100vh;margin:0;text-align:center}"
-            "p{color:#8696a0;max-width:34ch}</style>"
-            "<div><h2>Signed out</h2>"
-            "<p>This browser will need the token again. WhatsApp is still "
-            "linked and nothing has been deleted.</p></div>",
-            headers=headers)
+        One action, because two invited the reading that signing out of the
+        browser was enough — and it was not. Connectors kept full access for
+        thirty days, routine tokens for ever, which is exactly what someone
+        clicking "sign out" believes they have just prevented.
 
-    async def revoke_all(request):
-        """Expire every issued credential. Not the configured one.
+        WA_AUTH_TOKEN is spared: it comes from the environment and is
+        re-registered on every start, so revoking it locks you out until a
+        restart and does nothing after one.
 
-        Signing out of a browser leaves connectors untouched: an OAuth token
-        lasts thirty days, and a routine token does not expire at all. Without
-        this the only way to sign a lost or unwanted client out is to wait, or
-        to change WA_AUTH_TOKEN and restart — which signs out everything
-        including you.
-
-        WA_AUTH_TOKEN itself is deliberately spared. It comes from the
-        environment and is re-registered on every start, so revoking it would
-        do nothing after a restart while locking you out until then.
+        WhatsApp stays linked and nothing is deleted. Unlinking is wa_logout,
+        and it costs the archive.
         """
         keep = f"oauth.token.{settings.auth_token}" if settings.auth_token else ""
         revoked = 0
@@ -332,10 +309,24 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
                     continue
                 await rt.store.put_kv(key, {"expires_at": 0})
                 revoked += 1
-        log.warning("revoked %d issued credential(s)", revoked)
-        return JSONResponse({"ok": True, "revoked": revoked},
-                            headers={"Set-Cookie": "wa_session=; Path=/; "
-                                                   "HttpOnly; SameSite=Lax; Max-Age=0"})
+        log.warning("signed out: %d issued credential(s) revoked", revoked)
+
+        headers = {"Set-Cookie": "wa_session=; Path=/; HttpOnly; SameSite=Lax; "
+                                 "Max-Age=0",
+                   "Cache-Control": "no-store"}
+        if "text/html" not in request.headers.get("accept", ""):
+            return JSONResponse({"ok": True, "revoked": revoked}, headers=headers)
+        return HTMLResponse(
+            "<!doctype html><meta charset=utf-8><title>Signed out</title>"
+            "<style>body{background:#0b141a;color:#e9edef;font:15px/1.6 "
+            "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;"
+            "display:grid;place-items:center;height:100vh;margin:0;text-align:center}"
+            "p{color:#8696a0;max-width:38ch}</style>"
+            f"<div><h2>Signed out</h2><p>This browser and {revoked} other "
+            "credential(s) — connectors, routines, pending hand-offs — will "
+            "each need to authenticate again.</p>"
+            "<p>WhatsApp is still linked and nothing has been deleted.</p></div>",
+            headers=headers)
 
     async def settings_page(request):
         from .settings_ui import build
@@ -486,8 +477,7 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         Route("/api/status", status_api),
         Route("/api/flow/{flow}", flow_api),
         Route("/settings", settings_page),
-        Route("/logout", sign_out),
-        Route("/api/revoke-all", revoke_all, methods=["POST"]),
+        Route("/logout", sign_out, methods=["GET", "POST"]),
         Route("/api/settings", settings_api, methods=["POST"]),
         Route("/qr.txt", qr_txt),
         Route("/media/{mid}", media),
