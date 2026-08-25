@@ -73,7 +73,8 @@ button{font:inherit;cursor:pointer}
       background:#111b21;border-right:1px solid #222d34}
 .lhead{display:flex;align-items:center;gap:10px;padding:16px 16px 10px}
 .lhead h1{font-size:19px;margin:0;font-weight:600}
-.me{margin-left:auto;font-size:12px;color:#8696a0;text-align:right;line-height:1.3}
+.whoami{margin-left:auto;font-size:12px;color:#8696a0;text-align:right;
+        line-height:1.3}
 .dot{width:8px;height:8px;border-radius:50%;background:#00a884;display:inline-block}
 .dot.warn{background:#f0b232}
 .search{padding:0 12px 8px}
@@ -571,13 +572,13 @@ def shell(q: str) -> str:
     <button id="nav-chats" class="on" title="Chats">{icon("chats")}</button>
     <div class="sp"></div>
     <button id="nav-settings" title="Settings">{icon("settings")}</button>
-    <div class="me" id="nav-profile" title="Profile"></div>
+    <div class="whoami" id="nav-profile" title="Profile"></div>
   </div>
   <div class="list">
     <div class="lhead">
       <span class="dot" id="live"></span>
       <h1>Chats</h1>
-      <div class="me"><div id="pn">WhatsApp</div><div id="num"></div></div>
+      <div class="whoami"><div id="pn">WhatsApp</div><div id="num"></div></div>
     </div>
     <div class="search"><input id="q" placeholder="Search chats" autocomplete="off"></div>
     <div class="filters">

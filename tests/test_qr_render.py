@@ -51,3 +51,28 @@ def test_the_payload_survives_rendering():
 def test_a_short_payload_still_renders():
     svg = qr_svg("short")
     assert "viewBox" in svg and "<path" in svg
+
+
+# ----------------------------------------------------- css collisions
+
+def test_the_outgoing_bubble_class_is_not_shared_with_the_header():
+    """A bubble renders as class="m me", so a bare `.me` matched it too.
+
+    That header rule right-aligned every outgoing message and shrank it to
+    12px. Only the colour collision was masked, because `.m.me` happens to be
+    more specific — everything else in it applied silently.
+
+    `.m.me` is fine and intended; a BARE `.me` is the trap, because it styles
+    both and nothing says so.
+    """
+    import pathlib
+    import re
+
+    from wa_mcp.ui import CSS
+
+    bare = re.findall(r"^\.me\{", CSS, re.M)
+    assert not bare, "a bare .me rule also styles every outgoing message bubble"
+
+    body = pathlib.Path("wa_mcp/ui.py").read_text()
+    assert 'class="me"' not in body, \
+        "only message bubbles may carry the `me` class"
