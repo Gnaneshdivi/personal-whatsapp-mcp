@@ -412,9 +412,12 @@ class Auth:
 
     SKIP = ("/.well-known/", "/register", "/authorize", "/token", "/revoke")
 
-    def __init__(self, app, token: str, rt=None):
+    def __init__(self, app, token: str, rt=None, token_hint: str = ""):
         self.app, self.token = app, token
         self.rt = rt
+        # Telling someone to paste a token without saying where it is leaves
+        # them looking at a password box for a password nobody gave them.
+        self.token_hint = token_hint or "Paste the access token."
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http" or not self.token:
@@ -456,7 +459,7 @@ class Auth:
                 # seeing it has no idea the answer is a token they were given
                 # once at install.
                 if self._is_browser(scope, headers):
-                    return await _sign_in_page(send, scope)
+                    return await _sign_in_page(send, scope, self.token_hint)
                 return await _plain(send, 401, b'{"error":"unauthorized"}')
         elif (from_url and self._is_browser(scope, headers)
               and scope.get("path") != "/logout"):
@@ -490,7 +493,7 @@ class Auth:
         return await load(self.rt.store, presented[7:].strip()) is not None
 
 
-async def _sign_in_page(send, scope) -> None:
+async def _sign_in_page(send, scope, token_hint: str = "") -> None:
     """401 with a form, rather than 401 with nothing.
 
     The form posts the token back as ?k=, which the middleware above trades for
@@ -518,7 +521,7 @@ async def _sign_in_page(send, scope) -> None:
         "padding:11px;font:inherit;font-weight:600;cursor:pointer}</style>"
         f'<form method="GET" action="{path}">'
         "<h1>Sign in</h1>"
-        "<p>Paste the access token this server was started with.</p>"
+        f"<p>{token_hint}</p>"
         '<input name="k" type="password" placeholder="Access token" '
         'autofocus autocomplete="current-password">'
         "<button type=submit>Sign in</button>"
@@ -600,7 +603,9 @@ def create_app(settings: Settings, storage: Storage):
 
     if settings.auth_token:
         log.info("bearer auth enabled")
-        return Auth(scoped, settings.auth_token, rt=RT)
+        return Auth(scoped, settings.auth_token, rt=RT,
+                    token_hint="Paste the token from WA_AUTH_TOKEN, the "
+                               "variable this server was started with.")
 
     # No token. On loopback that is right: only processes on this machine can
     # reach it, and asking someone to manage a credential for their own laptop
@@ -617,18 +622,59 @@ def create_app(settings: Settings, storage: Storage):
                         "NO authentication. Anyone who finds the URL can read "
                         "and send on this WhatsApp account.")
             return scoped
-        token = secrets.token_urlsafe(32)
+        token = _persistent_token()
         settings.__dict__["auth_token"] = token
-        log.warning("No WA_AUTH_TOKEN set and this is reachable from other "
-                    "machines, so one was generated for this run:\n\n"
-                    "    ?k=%s\n\n"
-                    "Set WA_AUTH_TOKEN to keep it across restarts, or "
-                    "WA_ALLOW_OPEN=1 to run without authentication.", token)
-        return Auth(scoped, token, rt=RT)
+        base = settings.public_base_url or f"http://{settings.host}:{settings.port}"
+        log.warning(
+            "\n"
+            "  Reachable from other machines, so access needs a token.\n"
+            "  Kept in %s — the same one after a restart.\n\n"
+            "  Open this:      %s/?k=%s\n"
+            "  Connect MCP to: %s/mcp?k=%s\n\n"
+            "  Set WA_AUTH_TOKEN to choose your own, or WA_ALLOW_OPEN=1 for none.\n",
+            _token_path(), base, token, base, token)
+        return Auth(scoped, token, rt=RT,
+                    token_hint=f"The token is printed when the server starts, "
+                               f"and kept in {_token_path()}")
 
     log.info("no token set — open on %s, which only this machine can reach",
              settings.host)
     return scoped
+
+
+def _token_path():
+    from .config import data_dir
+
+    return data_dir() / "access-token"
+
+
+def _persistent_token() -> str:
+    """The generated token, kept across restarts.
+
+    A fresh one per run means every connector URL breaks whenever the process
+    restarts — which for a self-hosted thing is often — and the person has to
+    go and find the new one. Written next to the database so it can always be
+    read back, with 0600 because it is the whole account.
+    """
+    path = _token_path()
+    try:
+        existing = path.read_text().strip()
+        if existing:
+            return existing
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        log.warning("could not read %s: %s", path, exc)
+
+    token = secrets.token_urlsafe(32)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(token + "\n")
+        path.chmod(0o600)
+    except Exception as exc:
+        # Still usable this run; it just will not survive a restart.
+        log.warning("could not save the token to %s: %s", path, exc)
+    return token
 
 
 def _is_reachable_from_elsewhere(settings) -> bool:

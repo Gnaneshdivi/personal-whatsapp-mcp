@@ -427,6 +427,9 @@ async def test_a_browser_without_a_token_gets_a_form(client):
     assert r.status_code == 401
     assert "Sign in" in r.text
     assert 'name="k"' in r.text
+    # And says where to find it. A password box for a password nobody gave
+    # you is not a sign-in page.
+    assert "WA_AUTH_TOKEN" in r.text or "printed when the server starts" in r.text
 
 
 async def test_the_form_posts_back_to_the_path_it_was_asked_for(client):

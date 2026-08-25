@@ -97,3 +97,23 @@ async def test_a_configured_token_is_never_replaced(monkeypatch, tmp_path):
     app = create_app(settings, resolve_storage("", tmp_path))
     async with LifespanManager(app):
         assert settings.auth_token == "mine"
+
+
+def test_the_generated_token_survives_a_restart(tmp_path, monkeypatch):
+    """A fresh one per run breaks every connector URL on every restart, and
+    the person has to go and find the new one."""
+    monkeypatch.setenv("WA_DATA_DIR", str(tmp_path))
+    from wa_mcp.app import _persistent_token
+
+    first = _persistent_token()
+    assert first and _persistent_token() == first
+    assert (tmp_path / "access-token").read_text().strip() == first
+
+
+def test_the_token_file_is_not_world_readable(tmp_path, monkeypatch):
+    """It is the whole account."""
+    monkeypatch.setenv("WA_DATA_DIR", str(tmp_path))
+    from wa_mcp.app import _persistent_token
+
+    _persistent_token()
+    assert oct((tmp_path / "access-token").stat().st_mode)[-3:] == "600"
