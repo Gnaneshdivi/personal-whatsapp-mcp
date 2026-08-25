@@ -616,3 +616,27 @@ async def test_the_profile_tool_is_registered(client):
     out = await rpc(client, "tools/list")
     names = [t["name"] for t in out["result"]["tools"]]
     assert "wa_profile" in names
+
+
+async def test_the_ui_can_read_a_contact_profile(client, monkeypatch):
+    """The header panel needs it over HTTP, not only as an MCP tool."""
+    from wa_mcp.app import RT
+
+    async def fake(jid):
+        return {"chat_jid": jid, "name": "Asif", "devices": 2,
+                "picture_url": "", "about": ""}
+
+    monkeypatch.setattr(RT.wa, "profile", fake)
+    d = (await client.get("/api/profile/1@s.whatsapp.net?k=t0ken")).json()
+    assert d["ok"] is True and d["devices"] == 2
+
+
+async def test_a_profile_failure_is_reported_not_swallowed(client, monkeypatch):
+    from wa_mcp.app import RT
+
+    async def boom(jid):
+        raise RuntimeError("no session")
+
+    monkeypatch.setattr(RT.wa, "profile", boom)
+    r = await client.get("/api/profile/1@s.whatsapp.net?k=t0ken")
+    assert r.status_code == 502 and "no session" in r.json()["error"]

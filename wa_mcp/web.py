@@ -336,6 +336,14 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
             "WhatsApp sends at that point, not what was here.</p></div>",
             headers=headers)
 
+    async def profile_api(request):
+        """A contact's published details, for the header panel."""
+        try:
+            return JSONResponse({"ok": True,
+                                 **await rt.wa.profile(request.path_params["jid"])})
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=502)
+
     async def connect_info(request):
         """The URL to paste into an AI client, assembled here.
 
@@ -502,6 +510,7 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         Route("/settings", settings_page),
         Route("/logout", sign_out, methods=["GET", "POST"]),
         Route("/api/connect-info", connect_info),
+        Route("/api/profile/{jid}", profile_api),
         Route("/api/settings", settings_api, methods=["POST"]),
         Route("/qr.txt", qr_txt),
         Route("/media/{mid}", media),

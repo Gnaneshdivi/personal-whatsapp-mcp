@@ -135,6 +135,16 @@ button{font:inherit;cursor:pointer}
 .tk{display:inline-flex;color:#8696a0}
 .tk.rd{color:#53bdeb}
 .m img{max-width:100%;border-radius:6px;display:block;margin-bottom:4px}
+.hinfo{margin-left:auto;width:26px;height:26px;border-radius:50%;flex:none;
+   border:1px solid #3b4a54;background:none;color:#8696a0;font:italic 700 11px/1 inherit;
+   cursor:pointer}
+.hinfo:hover{border-color:#00a884;color:#00a884}
+.cprof{display:none;padding:12px 18px;border-bottom:1px solid #222d34;
+   background:#111b21;font-size:13px;color:#8696a0}
+.cprof.on{display:block}
+.cprof b{color:#e9edef;font-weight:500}
+.cprof .r{display:flex;gap:8px;padding:2px 0}
+.cprof .r span:first-child{min-width:104px;color:#8696a0}
 .m a{color:#53bdeb;text-decoration:underline}
 /* A chat address opens a conversation here rather than leaving the page, so it
    is marked differently from a web link — same colour, dotted rule. */
@@ -294,6 +304,33 @@ document.addEventListener("click", e => {
   openChat(a.dataset.jid);
 });
 
+/* The contact's own details, which are not the same as the name you saved.
+   Fetched on demand: it is a round trip to WhatsApp, and most of the time
+   nobody is asking. */
+async function showContact() {
+  const box = $("#cprof");
+  if (!current) return;
+  if (box.classList.contains("on")) { box.classList.remove("on"); return; }
+  box.classList.add("on");
+  box.innerHTML = "<div>Loading…</div>";
+  let d;
+  try {
+    d = await (await fetch(KA(`/api/profile/${encodeURIComponent(current)}`))).json();
+  } catch (e) { d = {ok: false, error: e.message}; }
+  if (!d.ok) { box.innerHTML = `<div>Could not read it: ${esc(d.error||"")}</div>`; return; }
+  const rows = [
+    ["Name", d.name || "—"],
+    ["Number", (d.chat_jid || "").split("@")[0]],
+    ["Linked devices", d.devices ?? "—"],
+  ];
+  if (d.business_name) rows.splice(1, 0, ["Business", d.business_name]);
+  // `about` is empty on every account tried, so it is shown only when there
+  // is something in it rather than as a permanent blank row.
+  if ((d.about || "").trim()) rows.push(["About", d.about.trim()]);
+  box.innerHTML = rows.map(([k, v]) =>
+    `<div class="r"><span>${esc(k)}</span><b>${esc(String(v))}</b></div>`).join("");
+}
+
 async function openChat(jid) {
   current = jid; oldest = null;
   $("#profile").style.display = "none";
@@ -306,6 +343,7 @@ async function openChat(jid) {
   $("#pname").textContent = d.chat.name;
   $("#pav").innerHTML = `${esc((d.chat.name||"?")[0].toUpperCase())}
     <img src="${KA("/avatar/" + encodeURIComponent(jid))}" alt="" onerror="this.remove()">`;
+  $("#cprof").classList.remove("on");   // a panel about the previous contact
   $("#pane").style.display = "";
   $("#blank").style.display = "none";
   $("#msgs").innerHTML = "";
@@ -551,6 +589,7 @@ async function showProfile() {
 
 $("#nav-chats").onclick = showChats;
 $("#nav-profile").onclick = showProfile;
+$("#hinfo").onclick = showContact;
 $("#nav-settings").onclick = () => location.href = KA("/settings");
 
 async function paintMe() {
@@ -597,7 +636,9 @@ def shell(q: str) -> str:
       <button class="back" id="back">&larr;</button>
       <div class="av" id="pav"></div>
       <span class="nm" id="pname"></span>
+      <button class="hinfo" id="hinfo" title="Contact details">i</button>
     </div>
+    <div class="cprof" id="cprof"></div>
     <div class="msgs" id="msgs"></div>
     <div class="comp">
       <textarea id="ta" rows="1" placeholder="Type a message"></textarea>
