@@ -48,7 +48,7 @@ the QR. Changing them afterwards does nothing until you unlink and pair again.
 
 ## Model
 
-Used when `backend` is `model`. See [choosing a model](models.md).
+Used when `backend` is `model`. See [choosing a model](auto-reply.md#choosing-a-model).
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -58,7 +58,7 @@ Used when `backend` is `model`. See [choosing a model](models.md).
 | `model.system_prompt` | persona | **Persona and tone only.** How the reply is delivered is added automatically and differs by mode, so it is not yours to set here. |
 | `model.history_messages` | `10` | Turns of conversation sent. More context costs more and, past a point, buys nothing. |
 | `model.temperature` | `0.7` | 0 is repeatable and flat. |
-| `model.max_tokens` | `300` | Hard ceiling. Reasoning models need far more — see [models](models.md#reasoning-models). |
+| `model.max_tokens` | `300` | Hard ceiling. Reasoning models need far more — see [models](auto-reply.md#reasoning-models). |
 | `model.timeout_seconds` | `30.0` | A late answer reads worse than none. |
 
 ## Webhook

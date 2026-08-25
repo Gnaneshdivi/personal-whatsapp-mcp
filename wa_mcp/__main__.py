@@ -168,7 +168,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"auth token    {'set' if settings.auth_token else 'NOT SET'}")
         return 0
 
-    print(_banner(settings, storage, settings.auth_token))
+    # flush: stdout is block-buffered when it is a file rather than a terminal,
+    # so running this as a service put the banner — and the URL you need — in a
+    # buffer that is only written when the process exits.
+    print(_banner(settings, storage, settings.auth_token), flush=True)
 
     import uvicorn
 

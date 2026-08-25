@@ -20,13 +20,7 @@ Python.
 ## Install
 
 ```bash
-pip install suprai-whatsapp-mcp
-```
-
-From source:
-
-```bash
-git clone <repo> && cd suprai-whatsapp-mcp
+git clone <repo> && cd whatsapp-mcp
 pip install -e ".[dev]"
 pytest -q
 ```
@@ -34,49 +28,82 @@ pytest -q
 ## First run
 
 ```bash
-python -m wa_mcp --token=generate
+python run.py
 ```
 
-That prints a bearer token and starts the server. Save the token — it is the
-credential for the web UI and the MCP endpoint, and anyone holding it can read
-and send on your WhatsApp account.
+`python -m wa_mcp` does exactly the same thing and takes the same options.
 
-Open the URL it prints, then **WhatsApp → Settings → Linked Devices → Link a
-device**, and scan.
+Open <http://127.0.0.1:8100>. You will get a QR code — scan it with
+**WhatsApp → Settings → Linked Devices → Link a device**.
 
-You only need that long URL once. The first page load trades the `?k=` token
-for a session cookie and redirects to the bare address, so from then on
-`https://your-host/` is enough — and the credential stops appearing in browser
-history and proxy logs. The cookie is HttpOnly and lasts 30 days.
-
-A browser without the cookie gets a sign-in form where the token can be pasted,
-rather than a bare 401. On loopback there is no token and no form — it is open,
-because only this machine can reach it.
+On localhost there is no token, no sign-in and nothing to configure: the server
+is open because only this machine can reach it. The QR is the front door.
 
 ### Then wait
 
 History sync is not instant, and it matters more than it looks:
 
-- WhatsApp sends history **exactly once, at pair time**. There is no way to
-  ask for more later. The whole conversation archive you will ever have is
-  decided in the minute after you scan.
+- WhatsApp sends history **exactly once, at pair time**. There is no way to ask
+  for more later. The whole conversation archive you will ever have is decided
+  in the minute after you scan.
 - `WA_HISTORY_DAYS` and `WA_HISTORY_SIZE_MB` are read **at pair time only**.
   Changing them later does nothing until you unlink and pair again.
-- Auto-reply is held until sync settles, so that switching it on does not
-  answer weeks of old messages at once.
+- Auto-reply is held until sync settles, so that switching it on does not answer
+  weeks of old messages at once.
 
 The UI shows progress. On a busy account expect a few thousand messages and a
 couple of minutes.
 
 ## Connecting an AI client
 
-**Settings → Connect an AI client** has the URL, with a copy button. That is
-the place to get it — the startup log prints it too, but a terminal you have
-closed is no help, and neither is one you never saw because it runs as a
-service.
+Locally, the URL is all there is:
 
-On this machine it needs no token. Reachable from elsewhere and the token is
-part of the URL, which makes that URL the whole credential.
+```
+http://127.0.0.1:8100/mcp
+```
+
+**Settings → Connect an AI client** has it with a copy button. That is the place
+to get it — the startup log prints it too, but a terminal you have closed is no
+help, and neither is one you never saw because it runs as a service.
+
+## Running it beyond this machine
+
+Set `PUBLIC_BASE_URL` to the public address. That is how the server knows it is
+no longer only reachable from here, so it protects itself instead of running
+open:
+
+```bash
+PUBLIC_BASE_URL=https://wa.example.com python run.py --port 8100
+```
+
+It generates a token, stores it, and prints both URLs:
+
+```
+  Reachable from other machines, so access needs a token.
+
+  Open this:      https://wa.example.com/?k=Tfk0n7Tx…
+  Connect MCP to: https://wa.example.com/mcp?k=Tfk0n7Tx…
+
+  The same one after a restart. Set WA_AUTH_TOKEN to choose your own,
+  or WA_ALLOW_OPEN=1 for none.
+```
+
+The token is the same across restarts, so a connector you configure once keeps
+working. It goes in the URL because a connector dialog takes a URL and nothing
+else — which makes that URL the entire credential. **Anyone holding it can read
+and send on your WhatsApp account.**
+
+The first browser load trades `?k=` for an HttpOnly session cookie and
+redirects to the bare address, so the token stops appearing in browser history
+and proxy logs. The cookie lasts 30 days.
+
+### Tunnels
+
+Cloudflare named tunnels work well. Quick tunnels (`--url`) are unreliable for
+this — they frequently establish only one of four edge connections and 404.
+
+ngrok works. Its free tier serves an interstitial page before your app, which is
+a nuisance in a browser but does not affect the MCP endpoint.
 
 ## Configuration
 
@@ -99,38 +126,20 @@ One variable, `WA_DATABASE_URL`, decides everything:
 
 Postgres is the only one that makes the process stateless, because whatsmeow's
 session store is SQL and can live there. Mongo cannot hold it, so even on Mongo
-the session stays a local file — which means the container still needs a
-volume.
+the session stays a local file — which means the container still needs a volume.
 
 For one number, SQLite is the right answer. The others exist because the same
 code runs inside a larger system.
 
-> `sqlite:///path` is treated as an **absolute** path here, not the relative
-> one SQLAlchemy's three-slash form implies. A relative database silently
-> created next to whatever directory you happened to start in is worse than an
-> error.
-
-## Running it behind a tunnel
-
-Set `PUBLIC_BASE_URL` to the public address. It is how the server knows it is
-no longer only reachable from this machine, so it generates a token rather than
-running open:
-
-```bash
-PUBLIC_BASE_URL=https://wa.example.com python -m wa_mcp --port 8100
-```
-
-Cloudflare named tunnels work well. Quick tunnels (`--url`) are unreliable for
-this — they frequently establish only one of four edge connections and 404.
-
-ngrok works. Its free tier serves an interstitial page before your app, which
-is a nuisance in a browser but does not affect the MCP endpoint.
+> `sqlite:///path` is treated as an **absolute** path here, not the relative one
+> SQLAlchemy's three-slash form implies. A relative database silently created
+> next to whatever directory you happened to start in is worse than an error.
 
 ## Docker
 
 ```bash
-docker build -t suprai-wa .
-docker run -p 8100:8100 --env-file .env -v wa-data:/data suprai-wa
+docker build -t whatsapp-mcp .
+docker run -p 8100:8100 --env-file .env -v wa-data:/data whatsapp-mcp
 ```
 
 **Mount the volume.** The session lives in `/data`. Losing it means re-pairing,
@@ -148,9 +157,9 @@ re-fetched from WhatsApp.
 ## Command line
 
 ```
-python -m wa_mcp [--host H] [--port P] [--database-url URL] [--data-dir DIR]
-                 [--token TOKEN | --token=generate] [--log-level LEVEL]
-                 [--print-config] [--mint-routine-token]
+python run.py [--host H] [--port P] [--database-url URL] [--data-dir DIR]
+              [--token TOKEN | --token=generate] [--log-level LEVEL]
+              [--print-config] [--mint-routine-token]
 ```
 
 `--print-config` resolves everything and exits — the quickest way to see which
@@ -159,3 +168,9 @@ database and data directory you are actually about to use.
 `--mint-routine-token` prints a restricted credential for a hand-off webhook's
 connector, on stdout so it can be piped. See
 [auto-reply](auto-reply.md#security).
+
+## Logging out
+
+**Settings → Log out** unlinks WhatsApp, deletes every message, chat and
+setting, and revokes all issued credentials. History syncs once at pair time, so
+this cannot be undone by pairing again.

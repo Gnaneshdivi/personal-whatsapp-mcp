@@ -35,7 +35,7 @@ From your provider. For OpenRouter that is
 |---|---|
 | Base URL | `https://openrouter.ai/api/v1` |
 | API key | your key |
-| Model | `openai/gpt-4o-mini` — see [models](models.md) |
+| Model | `openai/gpt-4o-mini` — see [models](auto-reply.md#choosing-a-model) |
 
 Pasting the full `.../chat/completions` endpoint also works; the tail is
 trimmed rather than appended twice.
@@ -94,7 +94,7 @@ https://your-host/mcp?k=<that token>
 
 **Not your own token.** Claude's own warning on that screen says it: *"Claude
 can use all tools from these connectors — including writes — without asking for
-permission during runs."* With your full token that means 22 tools and every
+permission during runs."* With your full token that means 23 tools and every
 conversation, driven by text a stranger wrote.
 
 ### 3. Get the trigger URL

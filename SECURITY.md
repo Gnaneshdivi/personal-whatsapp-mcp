@@ -56,7 +56,7 @@ delivery and routine tokens, not to yours.
 
 **The model's judgement.** With `context_only` off, or a model that ignores
 instructions, replies can state things that are not true. The measured
-differences are in [docs/models.md](docs/models.md), and they are large.
+differences are in [docs/auto-reply.md](docs/auto-reply.md#choosing-a-model), and they are large.
 
 **The webhook you point at.** In hand-off mode this server sends the message
 and stops. What your endpoint does with it is yours.

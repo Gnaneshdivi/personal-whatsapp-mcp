@@ -87,7 +87,7 @@ def test_the_dockerfile_persists_the_session():
 
 # --------------------------------------------------------------- the docs
 
-DOCS = ["setup.md", "settings.md", "auto-reply.md", "models.md",
+DOCS = ["setup.md", "settings.md", "auto-reply.md",
         "recipes.md", "architecture.md"]
 
 
@@ -184,3 +184,58 @@ def test_security_policy_names_what_is_not_protected():
     text = (ROOT / "SECURITY.md").read_text()
     assert "What is not protected" in text
     assert "does not eliminate it" in text.lower() or "not eliminate" in text.lower()
+
+
+# ------------------------------------------------------------- documentation
+
+def _markdown_files():
+    return sorted(ROOT.glob("*.md")) + sorted((ROOT / "docs").glob("*.md"))
+
+
+def _slug(heading: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", heading.strip().lower()).strip("-")
+
+
+@pytest.mark.parametrize("md", _markdown_files(), ids=lambda p: p.name)
+def test_every_documentation_link_resolves(md):
+    """A moved or merged doc leaves links behind that nothing catches.
+
+    Folding models.md into auto-reply.md broke four links across three files —
+    the sort of thing a reader hits on their first day and an author never
+    does, because nobody re-reads their own README.
+    """
+    broken = []
+    for text, link in re.findall(r"\[([^\]]+)\]\(([^)]+)\)", md.read_text()):
+        if link.startswith(("http://", "https://", "mailto:", "#")):
+            continue
+        path, _, anchor = link.partition("#")
+        target = (md.parent / path).resolve() if path else md
+        if not target.exists():
+            broken.append(f"[{text}]({link}) -> missing file")
+            continue
+        if anchor:
+            heads = {_slug(h) for h in
+                     re.findall(r"^#+ (.+)$", target.read_text(), re.M)}
+            if anchor not in heads:
+                broken.append(f"[{text}]({link}) -> no such heading")
+    assert not broken, f"{md.name}: " + "; ".join(broken)
+
+
+def test_the_readme_quick_start_matches_how_it_actually_runs():
+    """The README's first code block is the only one most people run."""
+    readme = (ROOT / "README.md").read_text()
+    assert "python run.py" in readme
+    assert (ROOT / "run.py").exists(), "README tells people to run a missing file"
+
+
+def test_documented_environment_variables_exist():
+    """A variable named in the README that config.py does not read is a
+    setting someone will set, restart, and watch do nothing."""
+    readme = (ROOT / "README.md").read_text()
+    config = (ROOT / "wa_mcp" / "config.py").read_text()
+    named = set(re.findall(r"`(WA_[A-Z_]+|PUBLIC_BASE_URL)`", readme))
+    # WA_TEST_* select optional test backends; they belong to the suite,
+    # not to the server's configuration.
+    named = {v for v in named if not v.startswith("WA_TEST_")}
+    missing = {v for v in named if v not in config}
+    assert not missing, f"README documents unread variables: {sorted(missing)}"

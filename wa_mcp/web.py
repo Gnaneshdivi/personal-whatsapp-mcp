@@ -457,12 +457,6 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         return Response(hit.read_bytes(), media_type="image/jpeg",
                         headers={"Cache-Control": "private, max-age=86400"})
 
-    async def qr_txt(request):
-        qr = rt.wa.qr if rt.wa else None
-        if not qr:
-            return PlainTextResponse("no live code\n", status_code=404)
-        return PlainTextResponse(qr, headers={"Cache-Control": "no-store"})
-
     async def events(request):
         """SSE. Pushes status on a timer plus anything the runtime emits."""
         q = rt.subscribe()
@@ -512,7 +506,6 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         Route("/api/connect-info", connect_info),
         Route("/api/profile/{jid}", profile_api),
         Route("/api/settings", settings_api, methods=["POST"]),
-        Route("/qr.txt", qr_txt),
         Route("/media/{mid}", media),
         Route("/avatar/{jid}", avatar),
         Route("/events", events),

@@ -7,7 +7,7 @@ Notable changes only. Dates are release dates.
 First release intended for anyone other than its author.
 
 ### Added
-- MCP server with 22 tools, a WhatsApp-Web-style UI, and auto-reply.
+- MCP server with 23 tools, a WhatsApp-Web-style UI, and auto-reply.
 - Auto-reply in two modes: an OpenAI-compatible model, or a webhook — either
   waiting for the reply or handing the message over.
 - Guardrails: context-only answering, topic allow/deny, keyword blocks checked
