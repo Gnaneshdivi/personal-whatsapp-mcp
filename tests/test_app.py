@@ -522,3 +522,13 @@ async def test_a_failed_unlink_still_clears_local_state(client, monkeypatch):
     assert out["structuredContent"]["ok"] is True
     assert "unlink_error" in out["structuredContent"]
     assert await RT.store.search("private") == []
+
+
+async def test_sign_out_confirms_in_the_page_not_in_a_system_dialog(client):
+    """confirm() renders a system dialog showing the domain, styled like a
+    security warning — too much for something that deletes nothing."""
+    page = (await client.get("/settings?k=t0ken")).text
+    # The call form, not the word — a comment explaining why it is gone
+    # would otherwise fail this.
+    assert 'confirm("' not in page and "confirm('" not in page
+    assert "Click again to confirm" in page

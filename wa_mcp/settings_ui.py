@@ -205,6 +205,7 @@ button{background:#00a884;color:#111b21;border:0;border-radius:8px;padding:10px 
        font:inherit;font-weight:600;cursor:pointer}
 button.ghost{background:transparent;color:#e9edef;border:1px solid #3b4a54}
 button.sm{padding:6px 12px;font-size:13px;font-weight:500}
+button.danger{border-color:#f15c6d;color:#f15c6d}
 .pick{justify-self:stretch}
 
 /* save bar */
@@ -677,11 +678,27 @@ function collect() {
   return o;
 }
 
+/* Two clicks, in the page. A native confirm() shows the domain in a system
+   dialog styled like a security warning — too much for something that deletes
+   nothing and is undone by authenticating again — and it is the one piece of
+   UI a page cannot make look like itself. */
 const signoutBtn = $("#signout");
+let armed = null;
 if (signoutBtn) signoutBtn.onclick = async () => {
-  if (!confirm("Sign out this browser and every connector?\n\n"
-               + "Each will have to authenticate again. WhatsApp stays linked "
-               + "and no messages are deleted.")) return;
+  if (!armed) {
+    signoutBtn.textContent = "Click again to confirm";
+    signoutBtn.classList.add("danger");
+    // Disarms itself, so a click left forgotten in a tab does not sign you
+    // out when you come back to it.
+    armed = setTimeout(() => {
+      armed = null;
+      signoutBtn.textContent = "Sign out";
+      signoutBtn.classList.remove("danger");
+    }, 5000);
+    return;
+  }
+  clearTimeout(armed);
+  signoutBtn.textContent = "Signing out…";
   // POST, not a link: a GET that revokes can be fired by a prefetcher or a
   // link scanner without anyone clicking it.
   try {
