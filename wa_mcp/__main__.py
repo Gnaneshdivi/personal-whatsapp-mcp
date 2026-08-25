@@ -69,6 +69,37 @@ def _load_dotenv() -> str | None:
     return path or None
 
 
+def _mint_routine_token(storage) -> int:
+    """Print a standing credential for a routine's WhatsApp connector.
+
+    Without this the only way to get one was to open a Python REPL and call an
+    internal function, so in practice everyone would use their full token —
+    which has all 22 tools and every conversation, and defeats the point of the
+    scoping entirely.
+    """
+    import asyncio
+
+    from .delivery import mint_routine
+    from .runtime import build_store
+
+    async def run() -> str:
+        store = build_store(storage)
+        await store.connect()
+        try:
+            return await mint_routine(store)
+        finally:
+            await store.close()
+
+    token = asyncio.run(run())
+    print(token)
+    print()
+    print("Configure the routine's WhatsApp connector with this, not your own", file=sys.stderr)
+    print("token. It can call wa_send, wa_send_media and wa_typing, only in the", file=sys.stderr)
+    print("chat a delivery names, and only when the call carries that", file=sys.stderr)
+    print("delivery's reply_token. It does not expire; delete its row to revoke.", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     env_file = _load_dotenv()
     p = argparse.ArgumentParser(
@@ -86,6 +117,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--log-level", default=None)
     p.add_argument("--print-config", action="store_true",
                    help="show resolved configuration and exit")
+    p.add_argument("--mint-routine-token", action="store_true",
+                   help="print a restricted token for a hand-off webhook's "
+                        "connector, then exit. It may only send, only in the "
+                        "chat a delivery names, and only with that delivery's "
+                        "reply_token.")
     args = p.parse_args(argv)
 
     if args.data_dir:
@@ -118,6 +154,9 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+
+    if args.mint_routine_token:
+        return _mint_routine_token(storage)
 
     if args.print_config:
         print(f"host          {settings.host}:{settings.port}")

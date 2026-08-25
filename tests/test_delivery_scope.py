@@ -254,3 +254,40 @@ async def test_the_reply_tools_accept_the_argument():
         fn = getattr(A, name)
         fn = getattr(fn, "fn", fn)
         assert "reply_token" in inspect.signature(fn).parameters, name
+
+
+def test_the_cli_can_mint_a_routine_token(tmp_path, monkeypatch, capsys):
+    """Otherwise the only way to get one is to call an internal function.
+
+    In practice that means everybody uses their full token — all 22 tools and
+    every conversation — which defeats the scoping entirely.
+
+    Synchronous on purpose: main() calls asyncio.run(), which cannot be done
+    from inside a running loop.
+    """
+    import asyncio
+
+    monkeypatch.delenv("WA_DATABASE_URL", raising=False)
+    monkeypatch.setenv("WA_DATA_DIR", str(tmp_path))
+
+    from wa_mcp.__main__ import main
+
+    assert main(["--mint-routine-token"]) == 0
+    token = capsys.readouterr().out.strip().splitlines()[0]
+    assert len(token) > 20
+
+    from wa_mcp.config import resolve_storage
+    from wa_mcp.runtime import build_store
+
+    async def read_back():
+        store = build_store(resolve_storage("", tmp_path))
+        await store.connect()
+        try:
+            return await load(store, token)
+        finally:
+            await store.close()
+
+    rec = asyncio.run(read_back())
+    assert rec and rec.get("routine") is True
+    assert refusal(rec, "tools/call", "wa_list_chats", {}) is not None
+    assert refusal(rec, "tools/call", "wa_send", {"to": CHAT}) is not None

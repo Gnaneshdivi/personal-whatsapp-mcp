@@ -149,7 +149,8 @@ you or reply to you are considered — the rest is people talking to the room.
 
 ## Security
 
-The number is a real person's. A few things follow from that:
+Full policy: [SECURITY.md](SECURITY.md). The number is a real person's, and a
+few things follow from that:
 
 **Untrusted input is tagged.** Every inbound message is wrapped in
 `<msg id="…">` with a per-request nonce, and the model is told that anything

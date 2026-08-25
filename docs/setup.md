@@ -124,3 +124,18 @@ Alpine's musl fails at import time rather than at build time.
 Schema changes are additive and applied on open, so an upgrade keeps your
 messages. Do not delete `app.db` to "reset" — the messages in it cannot be
 re-fetched from WhatsApp.
+
+## Command line
+
+```
+python -m wa_mcp [--host H] [--port P] [--database-url URL] [--data-dir DIR]
+                 [--token TOKEN | --token=generate] [--log-level LEVEL]
+                 [--print-config] [--mint-routine-token]
+```
+
+`--print-config` resolves everything and exits — the quickest way to see which
+database and data directory you are actually about to use.
+
+`--mint-routine-token` prints a restricted credential for a hand-off webhook's
+connector, on stdout so it can be piped. See
+[auto-reply](auto-reply.md#security).

@@ -61,7 +61,7 @@ def test_declared_dependencies_are_actually_imported():
 @pytest.mark.parametrize("name", ["README.md", "LICENSE", ".env.example",
                                   "Dockerfile", ".dockerignore", ".gitignore",
                                   "CHANGELOG.md", "CONTRIBUTING.md",
-                                  ".github/workflows/ci.yml"])
+                                  "SECURITY.md", ".github/workflows/ci.yml"])
 def test_the_files_a_deployment_needs_exist(name):
     p = ROOT / name
     assert p.is_file() and p.stat().st_size > 0, f"{name} is missing or empty"
@@ -172,3 +172,14 @@ def test_no_license_classifier_alongside_a_license_expression():
 def test_ci_installs_libmagic():
     """Without it every test errors on collection, blaming a Python package."""
     assert "libmagic" in (ROOT / ".github/workflows/ci.yml").read_text()
+
+
+def test_security_policy_names_what_is_not_protected():
+    """A policy listing only the defences reads as a claim of completeness.
+
+    Prompt injection is mitigated here, not solved, and a token in a connector
+    grants everything. Someone deploying this needs both stated.
+    """
+    text = (ROOT / "SECURITY.md").read_text()
+    assert "What is not protected" in text
+    assert "does not eliminate it" in text.lower() or "not eliminate" in text.lower()

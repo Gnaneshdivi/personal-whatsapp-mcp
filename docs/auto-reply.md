@@ -133,6 +133,18 @@ message a stranger wrote. So the boundary is not asked of the model:
 Configure your routine's connector with a restricted token, not your full one.
 A full token has all 22 tools and every chat.
 
+```bash
+python -m wa_mcp --mint-routine-token
+```
+
+That prints one token. Use it as the connector's credential:
+
+```
+https://your-host/mcp?k=<the token>
+```
+
+It does not expire — delete its row from the `kv` table to revoke it.
+
 **Rate limits are a circuit breaker.** A per-chat cooldown and an hourly cap
 across all chats. They do not prevent a loop with another bot; they slow it to
 something you notice and cap what it costs.
