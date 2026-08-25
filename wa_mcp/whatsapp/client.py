@@ -32,6 +32,7 @@ from ..errors import NotConnected, RateLimited, SendFailed
 from ..store.base import Message, to_ms
 from . import extract
 from . import jid as J
+from . import contacts as contacts_mod
 from .contacts import ContactBook
 from .events import SUBSCRIBED, event_type_for
 from .sync import Phase, SyncTracker
@@ -61,6 +62,22 @@ class _TokenBucket:
             self._tokens -= 1
             return 0.0
         return (1 - self._tokens) / self._rate
+
+
+def _push_name(info) -> str | None:
+    """The name someone has set for themselves, off a message.
+
+    The protobuf field is `Pushname` — one capital, in the middle of a message
+    whose other fields are `MessageSource`, `ServerID`, `MediaType`. Reading it
+    as `PushName` or `pushName` returns the getattr default instead of raising,
+    so it looked like nobody on WhatsApp had ever set a name. Every spelling is
+    tried rather than trusting one.
+    """
+    for attr in ("Pushname", "PushName", "pushName", "push_name"):
+        value = (getattr(info, attr, "") or "").strip()
+        if value:
+            return value
+    return None
 
 
 class WhatsApp:
@@ -523,7 +540,7 @@ class WhatsApp:
             if await self.store.upsert_message(Message(
                 message_id=getattr(key, "ID", "") or getattr(key, "id", ""),
                 chat_jid=chat, sender_jid=sender or None,
-                sender_name=(getattr(info, "pushName", "") or "").strip() or None,
+                sender_name=_push_name(info),
                 is_from_me=from_me, ts=ts, type=msg_type, text=text,
                 media_meta=media or {},
                 quoted_id=extract.quoted_message_id(body),
@@ -684,7 +701,7 @@ class WhatsApp:
             message_id=message_id,
             chat_jid=chat,
             sender_jid=sender,
-            sender_name=(getattr(info, "PushName", "") or "").strip() or None,
+            sender_name=_push_name(info),
             is_from_me=bool(src.IsFromMe),
             ts=ts,
             type=msg_type,
@@ -711,6 +728,7 @@ class WhatsApp:
         if not stored:
             return
         await self.store.upsert_chat_meta(chat, is_group=J.is_group(chat))
+        await self._adopt_push_name(chat, src, _push_name(info))
 
         await self._emit("message.received" if not src.IsFromMe else "message.sent", {
             "message_id": message_id, "chat_jid": chat, "sender_jid": sender,
@@ -929,6 +947,32 @@ class WhatsApp:
                            "admin": bool(getattr(p, "IsAdmin", False))})
         return {"chat_jid": J.to_jid(chat_jid), "name": str(name), "topic": str(topic),
                 "participants": people, "participant_count": len(people)}
+
+    async def _adopt_push_name(self, chat: str, src, push_name: str | None) -> None:
+        """Keep the name someone set for themselves, when we have nothing else.
+
+        An unsaved number has no entry in the address book, so the chat renders
+        as +91∙∙∙∙∙∙∙∙88 for someone whose name arrives on every message they
+        send. Storing it is what makes them findable by name and readable in
+        the list.
+
+        Only for one-to-one chats: in a group the push name belongs to whoever
+        sent that message, not to the group.
+        """
+        if not push_name or bool(src.IsFromMe) or J.is_group(chat):
+            return
+        # Never over a real name. The address book is what the owner chose;
+        # this is only for chats that have nothing.
+        if self.contacts.get(chat):
+            return
+        existing = await self.store.get_chat(chat)
+        current = getattr(existing, "name", None)
+        if current and not contacts_mod.is_placeholder(current):
+            return
+        if current == push_name:
+            return
+        await self.store.upsert_chat_meta(chat, name=push_name)
+        log.debug("named %s from its push name: %s", chat, push_name)
 
     async def profile(self, chat_jid: str) -> dict[str, Any]:
         """Whatever WhatsApp will say about someone.

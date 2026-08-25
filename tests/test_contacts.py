@@ -132,3 +132,29 @@ async def test_an_empty_book_is_not_mistaken_for_a_missing_one(tmp_path):
                   store=SQLiteStore(tmp_path / "app.db"),
                   settings=Settings(), contacts=book)
     assert wa.contacts is book, "the client built its own book instead"
+
+
+# ------------------------------------------------------------ push names
+
+def test_the_push_name_field_is_read_by_its_real_name():
+    """The protobuf calls it `Pushname` — one capital.
+
+    getattr with a default turns a wrong spelling into an empty string rather
+    than an error, so reading `PushName` looked exactly like "nobody on
+    WhatsApp has set a name": zero stored, out of thousands of messages.
+    """
+    from wa_mcp.whatsapp.client import _push_name
+
+    class Real:
+        Pushname = "Asif"
+
+    class Wrong:
+        PushName = "Asif"          # what the code used to look for
+
+    class Blank:
+        Pushname = "   "
+
+    assert _push_name(Real()) == "Asif"
+    assert _push_name(Wrong()) == "Asif"      # tolerated, not relied on
+    assert _push_name(Blank()) is None
+    assert _push_name(object()) is None

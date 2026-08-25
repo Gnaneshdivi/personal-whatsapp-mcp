@@ -321,7 +321,6 @@ async function showContact() {
   const rows = [
     ["Name", d.name || "—"],
     ["Number", (d.chat_jid || "").split("@")[0]],
-    ["Linked devices", d.devices ?? "—"],
   ];
   if (d.business_name) rows.splice(1, 0, ["Business", d.business_name]);
   // `about` is empty on every account tried, so it is shown only when there

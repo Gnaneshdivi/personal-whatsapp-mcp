@@ -510,3 +510,21 @@ async def test_purge_leaves_the_store_usable(store):
     await store.upsert_message(msg("m2", text="after"))
     rows = await store.get_messages("1@s.whatsapp.net")
     assert [m.text for m in rows] == ["after"]
+
+
+async def test_a_push_name_becomes_the_chat_name_when_there_is_none(store):
+    """An unsaved number has no address-book entry, so the chat renders as a
+    masked number for someone whose name arrives on every message they send."""
+    from wa_mcp.whatsapp.contacts import is_placeholder
+
+    await store.upsert_chat_meta("1@s.whatsapp.net", name="+91∙∙∙∙∙∙∙∙88")
+    chat = await store.get_chat("1@s.whatsapp.net")
+    assert is_placeholder(chat.name)
+
+    await store.upsert_chat_meta("1@s.whatsapp.net", name="Asif")
+    chat = await store.get_chat("1@s.whatsapp.net")
+    assert chat.name == "Asif"
+
+    # And it is findable by that name, which is the point.
+    found = await store.list_chats(limit=10, query="asif")
+    assert [c.chat_jid for c in found] == ["1@s.whatsapp.net"]
