@@ -81,3 +81,53 @@ def test_the_dockerfile_persists_the_session():
     """History syncs once, at pair time. An unmounted session means re-pairing."""
     df = (ROOT / "Dockerfile").read_text()
     assert "VOLUME" in df and "WA_DATA_DIR" in df
+
+
+# --------------------------------------------------------------- the docs
+
+DOCS = ["setup.md", "settings.md", "auto-reply.md", "models.md"]
+
+
+@pytest.mark.parametrize("name", DOCS)
+def test_the_docs_exist(name):
+    p = ROOT / "docs" / name
+    assert p.is_file() and p.stat().st_size > 500
+
+
+def test_every_auto_reply_setting_is_documented():
+    """64 fields is more than anyone will notice one missing from.
+
+    A setting that exists but is written down nowhere is one nobody will ever
+    set on purpose.
+    """
+    import dataclasses
+    import sys
+
+    sys.path.insert(0, str(ROOT))
+    from wa_mcp.trigger.settings import TriggerSettings
+
+    text = (ROOT / "docs" / "settings.md").read_text()
+
+    def leaves(obj, prefix=""):
+        for f in dataclasses.fields(obj):
+            v = getattr(obj, f.name)
+            name = f"{prefix}{f.name}"
+            if dataclasses.is_dataclass(v):
+                yield from leaves(v, f"{name}.")
+            else:
+                yield name
+
+    missing = [n for n in leaves(TriggerSettings()) if n not in text]
+    assert not missing, f"docs/settings.md does not mention: {missing}"
+
+
+def test_the_readme_links_to_every_doc():
+    readme = (ROOT / "README.md").read_text()
+    for name in DOCS:
+        assert f"docs/{name}" in readme, f"README does not link docs/{name}"
+
+
+def test_the_docs_say_there_is_no_memory():
+    """The most common wrong assumption about a thing like this."""
+    for name in ("README.md", "docs/auto-reply.md"):
+        assert "no memory" in (ROOT / name).read_text().lower(), name

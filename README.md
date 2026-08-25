@@ -27,9 +27,29 @@ delivery receipts, group info. Point Claude or any MCP client at `/mcp`.
 **A web UI.** Two panes, live over SSE, with delivery ticks, lazy-loaded
 history and search across both chats and message text.
 
-**An auto-reply.** Either an OpenAI-compatible model or your own webhook,
-with guardrails, active hours, an AI disclosure, and periodic summaries of
-anything waiting on you.
+**An auto-reply, in two modes.** Either an OpenAI-compatible model replies from
+here, or your own webhook does — synchronously, or by handing the message over
+to an agent that answers in its own time.
+
+## What it is not
+
+**There is no memory.** The assistant sees the last N turns of the conversation
+it is answering and nothing else. It does not remember other chats, does not
+build up knowledge of a contact, and does not learn.
+
+**There is no knowledge base.** No documents, no retrieval. Standing facts go
+in one prompt field and are pasted in on every call.
+
+**It is not an agent** in the default mode: one message out, then it stops.
+
+The message store exists for *you* — the UI, search, summaries, the MCP tools.
+The model never reads from it beyond the current conversation. If you want
+memory or tools, hand the message to your own agent; that is the second mode.
+
+**The replies are the model's.** This server shapes the prompt; what comes back
+is whatever the model produces. A weak model ignores instructions a strong one
+follows. See [choosing a model](docs/models.md) — `gpt-4o-mini` is the cheapest
+that behaved.
 
 ## Requirements
 
@@ -92,6 +112,15 @@ https://your-host/mcp?k=<WA_AUTH_TOKEN>
 
 Or leave the token off and let it use OAuth: the client opens a browser, you
 scan the QR, and pairing and authorising become one step.
+
+## Documentation
+
+| | |
+|---|---|
+| [Setup](docs/setup.md) | Install, pairing, storage, tunnels, Docker |
+| [Settings](docs/settings.md) | Every environment variable and all 64 auto-reply settings |
+| [Auto-reply](docs/auto-reply.md) | The two modes, the prompt, the security model |
+| [Choosing a model](docs/models.md) | What was measured, and the minimum that works |
 
 ## Auto-reply
 
