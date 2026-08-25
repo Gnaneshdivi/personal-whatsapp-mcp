@@ -174,20 +174,21 @@ appear in the UI only when it is on.
 | `max_media_bytes` | `8388608` | The URL comes from a model, so it cannot be trusted to be small. |
 | `show_typing` | `true` | |
 
-## This browser
+## Log out
 
-| Control | What it does |
-|---|---|
-| Sign out | Clears the session cookie. This browser needs the token again. WhatsApp stays linked, connectors keep working. |
-| Sign out everywhere | Expires every credential this server issued — MCP connectors, routine tokens, pending hand-off tokens. Each has to authenticate again. |
+One control, and it does everything: unlinks WhatsApp, deletes every message,
+chat and setting, and expires every credential this server issued — connectors,
+routine tokens, pending hand-off tokens.
 
-`WA_AUTH_TOKEN` is deliberately spared by both: it comes from the environment
-and is re-registered on every start, so revoking it would lock you out until a
-restart and do nothing after one. To change it, change the variable and
-restart.
+**Not reversible.** WhatsApp sends history once, at pair time, so pairing again
+starts with an empty archive rather than this one.
 
-Neither unlinks WhatsApp. That is `wa_logout`, and it costs the message
-archive — history syncs once, at pair time.
+`WA_AUTH_TOKEN` survives, because it comes from the environment and is
+re-registered on every start; revoking it would lock you out until a restart
+and do nothing after one. To change it, change the variable and restart.
+
+The button confirms in the page — a second click within five seconds — rather
+than in a browser dialog.
 
 ## Template tags
 

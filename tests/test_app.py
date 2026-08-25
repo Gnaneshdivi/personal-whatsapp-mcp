@@ -402,28 +402,43 @@ async def test_the_cleared_cookie_expires_rather_than_being_empty(noauth_client)
     assert after.status_code == 401
 
 
-async def test_signing_out_does_not_unlink_whatsapp(noauth_client):
-    """History syncs once, at pair time — a control that could cost the
-    archive must not be the one labelled "sign out"."""
-    body = (await noauth_client.get("/logout",
-                                    headers={"Cookie": "wa_session=t0ken",
-                                             "Accept": "text/html"})).text
-    assert "still linked" in body
-    assert "nothing has been deleted" in body
+async def test_logging_out_wipes_the_archive(client):
+    """One action, deliberately. Anything less left something behind that the
+    person clicking it believed was gone."""
+    from wa_mcp.app import RT
+    from wa_mcp.store.base import Message
+
+    await RT.store.upsert_message(Message(
+        message_id="w1", chat_jid="1@s.whatsapp.net", ts=1, text="private",
+        is_from_me=False))
+    await RT.store.put_kv("trigger.settings", {"enabled": True})
+
+    r = await client.post("/logout?k=t0ken")
+    assert r.json()["ok"] is True
+
+    assert await RT.store.search("private") == []
+    assert await RT.store.get_kv("trigger.settings") is None
 
 
-async def test_the_settings_page_offers_one_sign_out(client):
-    """One control. Two read as "the browser one is the safe option", and the
-    safe option left connectors with full access for thirty days."""
+async def test_the_logged_out_page_says_what_it_did(client):
+    body = (await client.get("/logout?k=t0ken",
+                             headers={"Accept": "text/html"})).text
+    assert "unlinked" in body
+    assert "cannot be" in body or "starts with an empty" in body or "not what was here" in body
+
+
+async def test_the_settings_page_offers_one_log_out(client):
+    """One control, and its label says what it does."""
     page = (await client.get("/settings?k=t0ken")).text
     assert 'id="signout"' in page
-    assert page.count(">Sign out</button>") == 1
-    assert "Sign out of everything" in page
+    assert page.count(">Log out</button>") == 1
+    assert "Log out and wipe everything" in page
+    assert "Not reversible" in page
 
 
 # ------------------------------------------------------ signing out everywhere
 
-async def test_signing_out_expires_issued_credentials(client):
+async def test_logging_out_expires_issued_credentials(client):
     """A browser sign-out leaves connectors untouched.
 
     An OAuth token lasts 30 days and a routine token never expires, so without
@@ -444,7 +459,7 @@ async def test_signing_out_expires_issued_credentials(client):
     assert await load(RT.store, b) is None
 
 
-async def test_signing_out_spares_the_configured_token(client):
+async def test_logging_out_spares_the_configured_token(client):
     """It comes from the environment and is re-registered on every start.
 
     Revoking it would lock you out until a restart and do nothing after one.
@@ -454,12 +469,12 @@ async def test_signing_out_spares_the_configured_token(client):
     assert r.status_code == 200
 
 
-async def test_signing_out_also_clears_this_browser(client):
+async def test_logging_out_also_clears_this_browser(client):
     r = await client.post("/logout?k=t0ken")
     assert "Max-Age=0" in r.headers["set-cookie"]
 
 
-async def test_signing_out_reports_how_many(client):
+async def test_logging_out_reports_how_many(client):
     """Silence would leave you wondering whether it did anything."""
     from wa_mcp.delivery import mint
 
@@ -531,4 +546,14 @@ async def test_sign_out_confirms_in_the_page_not_in_a_system_dialog(client):
     # The call form, not the word — a comment explaining why it is gone
     # would otherwise fail this.
     assert 'confirm("' not in page and "confirm('" not in page
-    assert "Click again to confirm" in page
+    assert "Click again to wipe everything" in page
+
+
+async def test_logout_is_not_intercepted_by_the_cookie_trade(client):
+    """Issuing a session cookie on the way into the endpoint that revokes it
+    would set and clear it in one click, and the redirect swallows the page
+    saying what was deleted."""
+    r = await client.get("/logout?k=t0ken", headers={"Accept": "text/html"},
+                         follow_redirects=False)
+    assert r.status_code == 200
+    assert "Logged out" in r.text

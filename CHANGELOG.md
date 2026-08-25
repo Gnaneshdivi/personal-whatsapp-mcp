@@ -21,6 +21,11 @@ First release intended for anyone other than its author.
 - Storage on SQLite, Postgres or Mongo behind one setting.
 - OAuth, so an MCP client authenticates by scanning the QR.
 
+### Behaviour worth knowing
+- **Log out wipes everything**: it unlinks WhatsApp, deletes messages, chats
+  and settings, and revokes every issued credential. History syncs once at pair
+  time, so this cannot be undone by pairing again.
+
 ### Notes for anyone upgrading a pre-release install
 - `send_images` is now `send_media`, and `max_image_bytes` is
   `max_media_bytes`. The old keys are still read.

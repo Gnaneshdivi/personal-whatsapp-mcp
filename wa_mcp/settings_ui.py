@@ -573,18 +573,17 @@ def build(rt, q: str, status: dict) -> str:
             "which is the useful case: watch a number without answering on it. "
             "The alerts about replies appear only once auto-reply is on.")
 
-    # One control. Two of them read as "the browser one is the safe option",
-    # and the safe option left connectors with full access for thirty days.
-    session = section("Session", (
-        row("Sign out of everything",
-            '<button type="button" class="ghost sm" id="signout">Sign out</button>',
-            "Signs this browser out and expires every credential this server "
-            "has issued — MCP connectors, routine tokens, pending hand-off "
-            "tokens. Each has to authenticate again.\n\nYour WA_AUTH_TOKEN is "
-            "not affected; it comes from the environment.\n\nWhatsApp stays "
-            "linked and no messages are deleted — unlinking is a different "
-            "thing, and it costs the archive.",
-            hint="This browser and every connector. WhatsApp stays linked.")
+    # One control that does the whole thing. Anything less left something
+    # behind that the person clicking it believed was gone.
+    session = section("Log out", (
+        row("Log out and wipe everything",
+            '<button type="button" class="ghost sm" id="signout">Log out</button>',
+            "Unlinks WhatsApp, deletes every message, chat and setting, and "
+            "expires every credential this server issued.\n\nThis cannot be "
+            "undone. WhatsApp sends history once, at pair time — pairing again "
+            "starts with an empty archive, not this one.\n\nYour "
+            "WA_AUTH_TOKEN still works; it comes from the environment.",
+            hint="Unlinks the phone and deletes everything. Not reversible.")
     ))
 
     body = (f'<div class="wrap"><a href="/{q}">&larr; Back to chats</a>'
@@ -678,21 +677,21 @@ function collect() {
   return o;
 }
 
-/* Two clicks, in the page. A native confirm() shows the domain in a system
-   dialog styled like a security warning — too much for something that deletes
-   nothing and is undone by authenticating again — and it is the one piece of
-   UI a page cannot make look like itself. */
+/* Two clicks, in the page. This one really is destructive — it unlinks the
+   phone and deletes the archive — so it needs a guard, but a native confirm()
+   announces the domain in a system dialog the page cannot style, and reads as
+   a browser warning rather than as this application asking. */
 const signoutBtn = $("#signout");
 let armed = null;
 if (signoutBtn) signoutBtn.onclick = async () => {
   if (!armed) {
-    signoutBtn.textContent = "Click again to confirm";
+    signoutBtn.textContent = "Click again to wipe everything";
     signoutBtn.classList.add("danger");
     // Disarms itself, so a click left forgotten in a tab does not sign you
     // out when you come back to it.
     armed = setTimeout(() => {
       armed = null;
-      signoutBtn.textContent = "Sign out";
+      signoutBtn.textContent = "Log out";
       signoutBtn.classList.remove("danger");
     }, 5000);
     return;

@@ -287,20 +287,23 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         return JSONResponse({"redirect": back})
 
     async def sign_out(request):
-        """Sign out: this browser and every credential this server issued.
+        """Log out completely: unlink WhatsApp and delete everything.
 
-        One action, because two invited the reading that signing out of the
-        browser was enough — and it was not. Connectors kept full access for
-        thirty days, routine tokens for ever, which is exactly what someone
-        clicking "sign out" believes they have just prevented.
+        One action, deliberately. Anything less left something behind that the
+        person clicking it believed was gone — connectors kept full access for
+        thirty days, and the message archive stayed on disk for an account the
+        server could no longer reach.
 
-        WA_AUTH_TOKEN is spared: it comes from the environment and is
-        re-registered on every start, so revoking it locks you out until a
-        restart and does nothing after one.
+        IRREVERSIBLE. WhatsApp sends history exactly once, at pair time, so the
+        messages deleted here cannot be recovered by pairing again; the archive
+        starts empty.
 
-        WhatsApp stays linked and nothing is deleted. Unlinking is wa_logout,
-        and it costs the archive.
+        WA_AUTH_TOKEN survives, because it comes from the environment and is
+        re-registered on every start. Revoking it would lock you out until a
+        restart and do nothing after one.
         """
+        # Credentials first: if the unlink or the purge fails halfway, the
+        # things that grant access are already dead rather than still live.
         keep = f"oauth.token.{settings.auth_token}" if settings.auth_token else ""
         revoked = 0
         for prefix in ("oauth.token.", "oauth.refresh."):
@@ -309,23 +312,37 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
                     continue
                 await rt.store.put_kv(key, {"expires_at": 0})
                 revoked += 1
-        log.warning("signed out: %d issued credential(s) revoked", revoked)
+
+        wiped: dict = {}
+        try:
+            wiped = await rt.wa.logout(purge=True)
+        except Exception as exc:
+            # Never connected, or the socket is already gone. The data still
+            # has to go, or a logout the user watched succeed leaves it there.
+            log.warning("unlink failed, purging anyway: %s", exc)
+            wiped = {"unlink_error": str(exc), "deleted": await rt.store.purge()}
+
+        deleted = wiped.get("deleted") or {}
+        log.warning("logged out: %d credential(s) revoked, %s deleted",
+                    revoked, deleted)
 
         headers = {"Set-Cookie": "wa_session=; Path=/; HttpOnly; SameSite=Lax; "
                                  "Max-Age=0",
                    "Cache-Control": "no-store"}
         if "text/html" not in request.headers.get("accept", ""):
-            return JSONResponse({"ok": True, "revoked": revoked}, headers=headers)
+            return JSONResponse({"ok": True, "revoked": revoked,
+                                 "deleted": deleted}, headers=headers)
+        n = deleted.get("messages", 0)
         return HTMLResponse(
-            "<!doctype html><meta charset=utf-8><title>Signed out</title>"
+            "<!doctype html><meta charset=utf-8><title>Logged out</title>"
             "<style>body{background:#0b141a;color:#e9edef;font:15px/1.6 "
             "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;"
             "display:grid;place-items:center;height:100vh;margin:0;text-align:center}"
-            "p{color:#8696a0;max-width:38ch}</style>"
-            f"<div><h2>Signed out</h2><p>This browser and {revoked} other "
-            "credential(s) — connectors, routines, pending hand-offs — will "
-            "each need to authenticate again.</p>"
-            "<p>WhatsApp is still linked and nothing has been deleted.</p></div>",
+            "p{color:#8696a0;max-width:40ch}a{color:#00a884}</style>"
+            f"<div><h2>Logged out</h2><p>WhatsApp is unlinked. {n} message(s) "
+            f"and {revoked} credential(s) were deleted.</p>"
+            "<p>Pair again to start over — the history will be whatever "
+            "WhatsApp sends at that point, not what was here.</p></div>",
             headers=headers)
 
     async def settings_page(request):

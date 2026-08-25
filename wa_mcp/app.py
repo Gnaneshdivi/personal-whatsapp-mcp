@@ -478,7 +478,12 @@ class Auth:
             # access it was issued. Scope decides what it may then reach.
             if not await self._is_delivery(presented):
                 return await _plain(send, 401, b'{"error":"unauthorized"}')
-        elif from_url and self._is_browser(scope, headers):
+        elif (from_url and self._is_browser(scope, headers)
+              and scope.get("path") != "/logout"):
+            # Not for /logout: issuing a session cookie on the way into the
+            # one endpoint whose job is to revoke it would set and clear it in
+            # the same click, and the redirect swallows the page that says
+            # what was deleted.
             # Trade the token in the URL for a cookie, then send the browser to
             # the bare address. A URL nobody can remember gets pasted into a
             # notes app, and every visit leaves the credential in history, in
