@@ -73,3 +73,29 @@ settings, please open an issue first.
 Match the surrounding code. Comments explain *why*, especially where the
 obvious approach is wrong — most of the comments here are about a thing that
 was tried and did not work.
+
+## Releasing (maintainers)
+
+1. Bump `version` in `pyproject.toml`.
+2. Note what changed in `CHANGELOG.md`.
+3. Tag it and push the tag:
+
+   ```bash
+   git tag v0.3.0
+   git push origin v0.3.0
+   ```
+
+`.github/workflows/release.yml` runs the tests, checks the tag against the
+version in `pyproject.toml`, builds, installs the wheel into a clean environment
+and runs it, then attaches the artifacts to a GitHub release.
+
+Publishing to PyPI from that workflow is opt-in and stays off until a `pypi`
+environment exists in the repository settings. It uses Trusted Publishing, so no
+API token is stored anywhere.
+
+The first upload is manual, to claim the name:
+
+```bash
+python -m build
+twine upload dist/*
+```

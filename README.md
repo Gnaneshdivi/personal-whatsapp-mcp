@@ -24,14 +24,13 @@ with Python.
 
 ## Contents
 
-- [Quick start](#quick-start)
+- [Install](#install)
 - [What it is](#what-it-is)
 - [What it is not](#what-it-is-not)
 - [MCP tools](#mcp-tools)
 - [Setup and installation](#setup-and-installation)
   - [What you need](#what-you-need)
-  - [Install](#install)
-  - [Install as a package](#install-as-a-package)
+  - [Install](#install-1)
   - [First run](#first-run)
   - [Connecting an AI client](#connecting-an-ai-client)
   - [Running it beyond this machine](#running-it-beyond-this-machine)
@@ -84,7 +83,14 @@ with Python.
 
 ---
 
-## Quick start
+## Install
+
+```bash
+pip install personal-whatsapp-mcp
+personal-whatsapp-mcp
+```
+
+Or from source, which is what you want if you intend to change it:
 
 ```bash
 git clone https://github.com/Gnaneshdivi/personal-whatsapp-mcp.git
@@ -92,6 +98,8 @@ cd personal-whatsapp-mcp
 pip install -e .
 python run.py
 ```
+
+Both start the same server on the same port.
 
 Open <http://127.0.0.1:8100>, scan the QR code with **WhatsApp → Linked
 Devices**, and wait for history to sync.
@@ -206,55 +214,52 @@ Python.
 ### Install
 
 ```bash
+pip install personal-whatsapp-mcp
+```
+
+That puts a `personal-whatsapp-mcp` command on your PATH. It takes the same
+options as `run.py` and needs no source directory:
+
+```bash
+personal-whatsapp-mcp
+personal-whatsapp-mcp --print-config
+```
+
+Install into a **virtual environment** rather than system Python — it pulls in
+neonize, which ships a compiled shared library:
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install personal-whatsapp-mcp
+```
+
+If pip says *"requires a different Python"*, that is the whole problem: this
+needs 3.11+, and the system `python3` on macOS is still 3.9.
+
+#### From source
+
+What you want if you intend to change it:
+
+```bash
 git clone https://github.com/Gnaneshdivi/personal-whatsapp-mcp.git
 cd personal-whatsapp-mcp
 pip install -e ".[dev]"
 pytest -q
+python run.py
 ```
 
-### Install as a package
+`python run.py`, `python -m wa_mcp` and `personal-whatsapp-mcp` all start the
+same server and take the same options.
 
-The two commands above run it from the source tree, which is what you want
-while changing it. To install it as a normal command instead — on this machine
-or another one — build a wheel and install that:
+#### Building a wheel yourself
+
+Only needed to install somewhere with no access to PyPI:
 
 ```bash
-pip install build            # once
-python -m build              # writes dist/*.whl and dist/*.tar.gz
+pip install build
+python -m build          # writes dist/*.whl and dist/*.tar.gz
 pip install dist/*.whl
 ```
-
-That puts a `personal-whatsapp-mcp` command on your PATH, and it no longer needs
-the source directory:
-
-```bash
-personal-whatsapp-mcp               # same options as run.py
-personal-whatsapp-mcp --print-config
-```
-
-Install it into a **virtual environment**, not system Python — it pulls in
-neonize, which ships a compiled shared library.
-
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install dist/*.whl
-```
-
-The wheel refuses to install on Python older than 3.11 rather than failing
-later, so if `pip` says *"requires a different Python"*, that is the whole
-problem — the system `python3` on macOS is still 3.9.
-
-#### Publishing it
-
-If you want `pip install` from anywhere, upload the same artifacts:
-
-```bash
-pip install twine
-twine upload dist/*
-```
-
-Set the `[project.urls]` in `pyproject.toml` to your repository first; they are
-what PyPI shows in the sidebar.
 
 ### First run
 

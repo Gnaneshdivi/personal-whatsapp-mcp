@@ -36,7 +36,14 @@ with Python.
 
 ---
 
-## Quick start
+## Install
+
+```bash
+pip install personal-whatsapp-mcp
+personal-whatsapp-mcp
+```
+
+Or from source, which is what you want if you intend to change it:
 
 ```bash
 git clone https://github.com/Gnaneshdivi/personal-whatsapp-mcp.git
@@ -44,6 +51,8 @@ cd personal-whatsapp-mcp
 pip install -e .
 python run.py
 ```
+
+Both start the same server on the same port.
 
 Open <http://127.0.0.1:8100>, scan the QR code with **WhatsApp → Linked
 Devices**, and wait for history to sync.
@@ -362,10 +371,11 @@ def main() -> None:
         demote((ROOT / path).read_text(), title) for path, title in DOCS)
     body = head + "\n" + middle + FAQ + TAIL.replace("{TESTS}", tests)
 
-    marker = "\n---\n\n## Quick start"
-    assert marker in body
+    # The contents list goes in above the first section after the intro.
+    marker = "\n---\n\n## Install"
+    assert marker in body, "the heading the contents list anchors to has moved"
     body = body.replace(marker, "\n## Contents\n\n" + toc(body) +
-                        "\n\n---\n\n## Quick start", 1)
+                        "\n\n---\n\n## Install", 1)
 
     (ROOT / "README.md").write_text(body)
     print(f"  README.md: {len(body.splitlines())} lines, {len(body)} bytes")
