@@ -11,6 +11,8 @@ with `wa_get_reply_settings` and `wa_set_reply_settings` — the latter merges,
 so `{"enabled": true}` switches replies on and touches nothing else. Every one has an explanation on hover in the
 UI; this page is the same information, written down.
 
+![The settings page, showing the auto-reply, summaries and alert sections](../assets/04-settings.png)
+
 ---
 
 # Environment

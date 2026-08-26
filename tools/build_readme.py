@@ -82,7 +82,10 @@ delivery receipts, group info. Point Claude Desktop, Claude Code, or any MCP
 client at `/mcp`.
 
 **A web UI.** Two panes, live over server-sent events, with delivery ticks,
-lazy-loaded history, and search across both chats and message text.
+lazy-loaded history, and search across both chats and message text. Click a
+contact for what WhatsApp will say about them, and the server's own state:
+
+![The contact panel: profile picture, connection status, sync progress and storage backend](assets/03-contact-profile.png)
 
 **An auto-reply, in two modes.** Either an OpenAI-compatible model replies from
 here, or your own webhook does — synchronously, or by handing the message over
@@ -288,6 +291,38 @@ DOCS = [
 ]
 
 
+RAW = ("https://raw.githubusercontent.com/Gnaneshdivi/"
+       "personal-whatsapp-mcp/main/assets/")
+
+
+def absolute_images(markdown: str) -> str:
+    """Point every image at raw.githubusercontent.
+
+    PyPI renders this same file as the project description with no repository
+    behind it, so a relative path resolves to nothing and the page shows seven
+    broken images. GitHub is happy with either form.
+    """
+    return re.sub(r"\]\(assets/", f"]({RAW}", markdown)
+
+
+def drop_repeated_images(markdown: str) -> str:
+    """Keep the first use of each image and drop the rest.
+
+    The README carries a couple of screenshots in its own introduction and then
+    inlines the guides, which use the same ones again — correct in a standalone
+    guide, repetitive in one long page.
+    """
+    seen, out = set(), []
+    for line in markdown.splitlines():
+        m = re.match(r"^!\[[^\]]*\]\(([^)]+)\)\s*$", line)
+        if m:
+            if m.group(1) in seen:
+                continue
+            seen.add(m.group(1))
+        out.append(line)
+    return "\n".join(out)
+
+
 def tools_table() -> str:
     import ast
 
@@ -377,6 +412,8 @@ def main() -> None:
     body = body.replace(marker, "\n## Contents\n\n" + toc(body) +
                         "\n\n---\n\n## Install", 1)
 
+    body = drop_repeated_images(body)
+    body = absolute_images(body)
     (ROOT / "README.md").write_text(body)
     print(f"  README.md: {len(body.splitlines())} lines, {len(body)} bytes")
 

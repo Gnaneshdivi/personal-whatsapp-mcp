@@ -261,3 +261,38 @@ def test_publishing_cannot_happen_by_accident():
     # Trusted publishing, so no long-lived token is stored anywhere
     assert "id-token: write" in pypi
     assert "password:" not in wf and "PYPI_API_TOKEN" not in wf
+
+
+def test_readme_images_are_absolute_urls():
+    """PyPI renders the README as the project description with no repository
+    behind it, so `assets/x.png` resolves to nothing and the page shows broken
+    images. Nothing about the repo looks wrong when this happens, which is why
+    it needs a test rather than a glance.
+    """
+    md = (ROOT / "README.md").read_text()
+    relative = [link for _, link in
+                re.findall(r"!\[([^\]]*)\]\(([^)]+)\)", md, re.S)
+                if not link.startswith("http")]
+    assert not relative, f"relative image paths break on PyPI: {relative}"
+
+
+def test_every_screenshot_is_used_somewhere():
+    """An image nobody references is weight in the repo and in every clone."""
+    referenced = set()
+    for md in _markdown_files():
+        for _, link in re.findall(r"!\[([^\]]*)\]\(([^)]+)\)", md.read_text(), re.S):
+            referenced.add(link.rsplit("/", 1)[-1])
+    on_disk = {p.name for p in (ROOT / "assets").glob("*.png")}
+    # whatsapp.png is the source the packaged icons are cut from, not a screenshot
+    unused = on_disk - referenced - {"whatsapp.png"}
+    assert not unused, f"in assets/ but referenced nowhere: {sorted(unused)}"
+
+
+def test_the_readme_shows_each_screenshot_once():
+    """The README carries a screenshot or two in its introduction and then
+    inlines the guides, which use the same ones again."""
+    md = (ROOT / "README.md").read_text()
+    links = [link for _, link in re.findall(r"!\[([^\]]*)\]\(([^)]+)\)", md, re.S)
+             if "assets/" in link]
+    dupes = {link for link in links if links.count(link) > 1}
+    assert not dupes, f"shown more than once: {sorted(dupes)}"
