@@ -545,3 +545,27 @@ async def test_the_icon_needs_no_token(client):
     authenticate."""
     r = await client.get("/favicon.png")
     assert r.status_code == 200
+
+
+def test_the_mcp_server_advertises_an_icon():
+    """Distinct from the web favicon: a client shows this beside the connector
+    in its own UI, and never fetches /favicon.png to find one. Without it the
+    connector sits under a generic placeholder."""
+    from wa_mcp.app import _icons
+
+    icons = _icons()
+    assert icons, "no icon advertised — the connector renders a placeholder"
+    icon = icons[0]
+    assert icon.mimeType == "image/png"
+    assert icon.src.startswith("data:image/png;base64,")
+    # A URL would have to name a host. Behind a tunnel that name is only known
+    # at run time, and on loopback there is nothing worth sending.
+    assert "://" not in icon.src.split(",", 1)[0]
+    assert len(icon.src) < 100_000, "an icon this large bloats every handshake"
+
+
+def test_the_icon_survives_being_installed_as_a_package():
+    """_icons reads package data. If the PNG is not in the wheel this returns
+    None and the failure is invisible — the connector just looks unbranded."""
+    from importlib.resources import files
+    assert (files("wa_mcp") / "static" / "favicon.png").is_file()

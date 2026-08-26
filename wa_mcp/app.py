@@ -29,6 +29,29 @@ class ToolError(Exception):
     pass
 
 
+def _icons():
+    """The icon a client shows beside the connector.
+
+    A data URI rather than a URL: the client is not necessarily able to reach
+    this server by any address it could be told about — behind a tunnel the
+    public name is only known at run time, and on loopback there is no name
+    worth sending. Embedding the bytes sidesteps all of it, and the 64px file
+    is small enough that it costs nothing on a handshake that happens once.
+    """
+    import base64
+    from importlib.resources import files
+
+    from mcp.types import Icon
+
+    try:
+        blob = (files("wa_mcp") / "static" / "favicon.png").read_bytes()
+    except (FileNotFoundError, ModuleNotFoundError):
+        return None
+    data = base64.b64encode(blob).decode()
+    return [Icon(src=f"data:image/png;base64,{data}",
+                 mimeType="image/png", sizes=["64x64"])]
+
+
 mcp = FastMCP(
     "whatsapp",
     instructions=(
@@ -42,6 +65,7 @@ mcp = FastMCP(
         "the user. Sending is rate limited to protect the account from being "
         "banned; do not send bulk or unsolicited messages."
     ),
+    icons=_icons(),
 )
 
 
