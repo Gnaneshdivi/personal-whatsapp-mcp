@@ -296,3 +296,22 @@ def test_the_readme_shows_each_screenshot_once():
              if "assets/" in link]
     dupes = {link for link in links if links.count(link) > 1}
     assert not dupes, f"shown more than once: {sorted(dupes)}"
+
+
+def test_the_docs_do_not_hardcode_a_test_count():
+    """A number like "397 tests" is wrong the moment anyone adds one, and
+    nothing fails when it drifts. It had already gone 100 out of date."""
+    stale = []
+    for md in _markdown_files():
+        for m in re.finditer(r"\b\d{2,4}\s+tests\b", md.read_text()):
+            stale.append(f"{md.name}: {m.group(0)}")
+    assert not stale, f"a test count that will rot: {stale}"
+
+
+def test_the_readme_has_one_install_section():
+    """It grew a Quick start and a Setup section that both explained how to
+    install, with different commands."""
+    md = (ROOT / "README.md").read_text()
+    tops = re.findall(r"^## (.+)$", md, re.M)
+    installish = [t for t in tops if re.search(r"\binstall\b", t, re.I)]
+    assert len(installish) <= 1, f"more than one top-level install section: {installish}"

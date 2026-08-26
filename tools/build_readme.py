@@ -36,23 +36,12 @@ with Python.
 
 ---
 
-## Install
+## Quick start
 
 ```bash
 pip install personal-whatsapp-mcp
 personal-whatsapp-mcp
 ```
-
-Or from source, which is what you want if you intend to change it:
-
-```bash
-git clone https://github.com/Gnaneshdivi/personal-whatsapp-mcp.git
-cd personal-whatsapp-mcp
-pip install -e .
-python run.py
-```
-
-Both start the same server on the same port.
 
 Open <http://127.0.0.1:8100>, scan the QR code with **WhatsApp → Linked
 Devices**, and wait for history to sync.
@@ -70,6 +59,9 @@ this machine can reach it.
 > `brew install libmagic` on macOS, `apt install libmagic1` on Debian/Ubuntu.
 > The traceback names a Python package rather than the missing C library, which
 > sends most people the wrong way.
+
+Running from source, other storage backends, tunnels and the full option list
+are in [Setup and installation](#setup-and-installation) below.
 
 ---
 
@@ -249,8 +241,9 @@ pip install -e ".[dev]"
 pytest -q
 ```
 
-{TESTS} tests. Postgres and Mongo suites skip unless `WA_TEST_POSTGRES` /
-`WA_TEST_MONGO` point at a server.
+That runs the suite against SQLite. The Postgres and Mongo suites skip unless
+`WA_TEST_POSTGRES` / `WA_TEST_MONGO` point at a server; set both and the store
+tests run against all three backends.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for what the tests are for and which
 behaviour is deliberately not configurable, and
@@ -400,17 +393,16 @@ def toc(markdown: str) -> str:
 
 
 def main() -> None:
-    tests = "397"
     head = HEAD.replace("{TOOLS}", tools_table())
     middle = "\n\n---\n\n".join(
         demote((ROOT / path).read_text(), title) for path, title in DOCS)
-    body = head + "\n" + middle + FAQ + TAIL.replace("{TESTS}", tests)
+    body = head + "\n" + middle + FAQ + TAIL
 
     # The contents list goes in above the first section after the intro.
-    marker = "\n---\n\n## Install"
+    marker = "\n---\n\n## Quick start"
     assert marker in body, "the heading the contents list anchors to has moved"
     body = body.replace(marker, "\n## Contents\n\n" + toc(body) +
-                        "\n\n---\n\n## Install", 1)
+                        "\n\n---\n\n## Quick start", 1)
 
     body = drop_repeated_images(body)
     body = absolute_images(body)

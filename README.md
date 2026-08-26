@@ -24,13 +24,13 @@ with Python.
 
 ## Contents
 
-- [Install](#install)
+- [Quick start](#quick-start)
 - [What it is](#what-it-is)
 - [What it is not](#what-it-is-not)
 - [MCP tools](#mcp-tools)
 - [Setup and installation](#setup-and-installation)
   - [What you need](#what-you-need)
-  - [Install](#install-1)
+  - [Install](#install)
   - [First run](#first-run)
   - [Connecting an AI client](#connecting-an-ai-client)
   - [Running it beyond this machine](#running-it-beyond-this-machine)
@@ -82,23 +82,12 @@ with Python.
 
 ---
 
-## Install
+## Quick start
 
 ```bash
 pip install personal-whatsapp-mcp
 personal-whatsapp-mcp
 ```
-
-Or from source, which is what you want if you intend to change it:
-
-```bash
-git clone https://github.com/Gnaneshdivi/personal-whatsapp-mcp.git
-cd personal-whatsapp-mcp
-pip install -e .
-python run.py
-```
-
-Both start the same server on the same port.
 
 Open <http://127.0.0.1:8100>, scan the QR code with **WhatsApp → Linked
 Devices**, and wait for history to sync.
@@ -116,6 +105,9 @@ this machine can reach it.
 > `brew install libmagic` on macOS, `apt install libmagic1` on Debian/Ubuntu.
 > The traceback names a Python package rather than the missing C library, which
 > sends most people the wrong way.
+
+Running from source, other storage backends, tunnels and the full option list
+are in [Setup and installation](#setup-and-installation) below.
 
 ---
 
@@ -1292,8 +1284,9 @@ pip install -e ".[dev]"
 pytest -q
 ```
 
-397 tests. Postgres and Mongo suites skip unless `WA_TEST_POSTGRES` /
-`WA_TEST_MONGO` point at a server.
+That runs the suite against SQLite. The Postgres and Mongo suites skip unless
+`WA_TEST_POSTGRES` / `WA_TEST_MONGO` point at a server; set both and the store
+tests run against all three backends.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for what the tests are for and which
 behaviour is deliberately not configurable, and
