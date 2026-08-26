@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re as _re
 from typing import Any
 from urllib.parse import urlparse
 
@@ -146,15 +147,20 @@ class MongoStore(Store):
 
     async def list_chats(self, *, limit: int = 30, archived: bool = False,
                          query: str | None = None, kind: str = "all") -> list[Chat]:
-        q: dict[str, Any] = {"archived": bool(archived)}
+        # Absent means false. A document written by upsert_chat_meta carries
+        # only the fields it was given, and {"archived": False} does not match
+        # a document with no `archived` at all — those chats were invisible.
+        q: dict[str, Any] = ({"archived": True} if archived
+                             else {"archived": {"$ne": True}})
         if kind == "groups":
             q["is_group"] = True
         elif kind == "direct":
-            q["is_group"] = False
+            q["is_group"] = {"$ne": True}
         elif kind == "unread":
             q["unread_count"] = {"$gt": 0}
         if query:
-            rx = {"$regex": query, "$options": "i"}
+            # the caller typed a name, not a regular expression
+            rx = {"$regex": _re.escape(query), "$options": "i"}
             q["$or"] = [{"name": rx}, {"chat_jid": rx}]
         cur = (self.db.chats.find(q)
                .sort([("pinned", -1), ("last_message_ts", -1)]).limit(limit))
@@ -262,11 +268,9 @@ class MongoStore(Store):
         return counts
 
     async def list_kv(self, prefix: str) -> list[str]:
-        import re as _re
-
-        cur = self.db.kv.find({"_id": {"$regex": "^" + _re.escape(prefix)}},
-                              {"_id": 1})
-        return [d["_id"] async for d in cur]
+        cur = self.db.kv.find({"key": {"$regex": "^" + _re.escape(prefix)}},
+                              {"key": 1})
+        return [d["key"] async for d in cur]
 
     async def get_kv(self, key: str) -> dict[str, Any] | None:
         d = await self.db.kv.find_one({"key": key})

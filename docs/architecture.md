@@ -67,7 +67,7 @@ not expect them to notice:
 
 ## Good first things
 
-- A storage backend, or the Mongo one's missing full-text parity.
+- A storage backend. All three implement `store/base.py` and are held to the same tests.
 - Incoming reactions — we send them, we do not parse them.
 - Wiring `GetAllContacts` through ctypes, so names come from WhatsApp's own
   contact store rather than only from chats.

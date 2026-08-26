@@ -422,6 +422,10 @@ the session stays a local file — which means the container still needs a volum
 For one number, SQLite is the right answer. The others exist because the same
 code runs inside a larger system.
 
+All three implement the same interface and are held to the same test suite,
+which runs against a real Postgres and a real Mongo, not a stand-in. Set
+`WA_TEST_POSTGRES` and `WA_TEST_MONGO` to run those yourself.
+
 > `sqlite:///path` is treated as an **absolute** path here, not the relative one
 > SQLAlchemy's three-slash form implies. A relative database silently created
 > next to whatever directory you happened to start in is worse than an error.
@@ -1161,7 +1165,7 @@ not expect them to notice:
 
 ### Good first things
 
-- A storage backend, or the Mongo one's missing full-text parity.
+- A storage backend. All three implement `store/base.py` and are held to the same tests.
 - Incoming reactions — we send them, we do not parse them.
 - Wiring `GetAllContacts` through ctypes, so names come from WhatsApp's own
   contact store rather than only from chats.

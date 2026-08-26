@@ -291,9 +291,15 @@ class PostgresStore(Store):
         return counts
 
     async def list_kv(self, prefix: str) -> list[str]:
+        # A prefix is a literal, not a pattern. Unescaped, a key containing %
+        # or _ matches more rows than it should — and this is what enumerates
+        # issued tokens, so matching too much is the wrong direction to err in.
+        safe = (prefix.replace("\\", "\\\\")
+                      .replace("%", "\\%")
+                      .replace("_", "\\_"))
         async with self.pool.acquire() as c:
             rows = await c.fetch(
-                "SELECT key FROM wa_kv WHERE key LIKE $1", prefix + "%")
+                "SELECT key FROM wa_kv WHERE key LIKE $1 ESCAPE '\\'", safe + "%")
         return [r["key"] for r in rows]
 
     async def get_kv(self, key: str) -> dict[str, Any] | None:
