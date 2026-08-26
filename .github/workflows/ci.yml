@@ -21,8 +21,6 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
 
-      # neonize imports python-magic when the module loads, so without this the
-      # package does not import at all and every test errors on collection.
       - name: Install libmagic
         run: sudo apt-get update && sudo apt-get install -y libmagic1
 
@@ -42,10 +40,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libmagic1
       - run: pip install build twine
       - run: python -m build
-      # Catches a malformed README or bad metadata before PyPI rejects it.
       - run: twine check dist/*
-      # A wheel that imports on the build machine but not a clean one is the
-      # usual packaging failure.
       - name: Import from a clean install
         run: |
           python -m venv /tmp/clean

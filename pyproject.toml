@@ -1,5 +1,4 @@
 [build-system]
-# 77 is the first with PEP 639 license expressions.
 requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
@@ -15,8 +14,6 @@ authors = [{ name = "SuprAI" }]
 keywords = ["whatsapp", "mcp", "model context protocol", "llm", "agent",
             "chatbot", "auto-reply", "whatsmeow", "neonize"]
 
-# Read on PyPI before anyone reads the README: what it is, who it is for, and
-# which Pythons it will actually install on.
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Web Environment",
@@ -33,18 +30,11 @@ classifiers = [
     "Typing :: Typed",
 ]
 
-
-# Everything needed for a working install. No Redis, no database server:
-# SQLite is the default and ships with Python.
 dependencies = [
     "fastmcp>=3.4,<4",
     "neonize>=0.4.3",
     "aiosqlite>=0.20",
     "httpx>=0.27",
-    # Imported directly by web.py. It arrives with fastmcp anyway, but a
-    # transitive dependency is not a promise: the day fastmcp moves off
-    # starlette, this breaks at import in everyone's install and the traceback
-    # points at us.
     "starlette>=0.37",
     "segno>=1.6",
     "python-dotenv>=1.0",
@@ -70,8 +60,6 @@ suprai-whatsapp-mcp = "wa_mcp.__main__:main"
 [tool.setuptools.packages.find]
 include = ["wa_mcp*"]
 
-# Without this the marker is not installed, and the Typing :: Typed classifier
-# is a claim type checkers cannot act on.
 [tool.setuptools.package-data]
 wa_mcp = ["py.typed"]
 
@@ -84,6 +72,4 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint.per-file-ignores]
-# Importing a pytest fixture and then naming a parameter after it is how
-# fixtures are shared between test modules; ruff reads it as a redefinition.
 "tests/*" = ["F811"]
