@@ -27,8 +27,6 @@ than code.
 No Redis, no database server, no Docker required. SQLite is the default and
 ships with Python.
 
-<!-- IMAGE: assets/banner.png — optional wordmark -->
-
 > **This project is independent and is not affiliated with WhatsApp or Meta.**
 > It links to your account the same way WhatsApp Web does, through
 > [whatsmeow](https://github.com/tulir/whatsmeow). Use it at your own risk:
@@ -81,7 +79,7 @@ lazy-loaded history, and search across both chats and message text.
 here, or your own webhook does — synchronously, or by handing the message over
 to an agent that answers in its own time.
 
-<!-- IMAGE: assets/02-chats.png — the two-pane chat view -->
+![The web UI: a chat list on the left and an open conversation on the right, with delivery ticks](assets/02-chats.png)
 
 ## What it is not
 
@@ -112,7 +110,7 @@ All 23 tools exposed at `/mcp`, callable from Claude or any MCP client.
 |---|---|
 {TOOLS}
 
-<!-- IMAGE: assets/07-claude-using-it.png — Claude calling the tools -->
+![Claude calling the WhatsApp tools: status, recent messages and a summary of the day](assets/07-claude-using-it.png)
 
 ---
 """
@@ -326,6 +324,8 @@ def demote(text: str, title: str) -> str:
     body = "\n".join(out)
     # links written relative to docs/ have to work from the repo root
     body = re.sub(r"\]\((?!https?:|#|/)([a-z-]+\.md)", r"](docs/\1", body)
+    # ../assets/x.png is correct from docs/ and wrong from the root
+    body = body.replace("](../assets/", "](assets/")
     return body.strip() + "\n"
 
 

@@ -15,8 +15,6 @@ than code.
 No Redis, no database server, no Docker required. SQLite is the default and
 ships with Python.
 
-<!-- IMAGE: assets/banner.png — optional wordmark -->
-
 > **This project is independent and is not affiliated with WhatsApp or Meta.**
 > It links to your account the same way WhatsApp Web does, through
 > [whatsmeow](https://github.com/tulir/whatsmeow). Use it at your own risk:
@@ -130,7 +128,7 @@ lazy-loaded history, and search across both chats and message text.
 here, or your own webhook does — synchronously, or by handing the message over
 to an agent that answers in its own time.
 
-<!-- IMAGE: assets/02-chats.png — the two-pane chat view -->
+![The web UI: a chat list on the left and an open conversation on the right, with delivery ticks](assets/02-chats.png)
 
 ## What it is not
 
@@ -183,7 +181,7 @@ All 23 tools exposed at `/mcp`, callable from Claude or any MCP client.
 | `wa_group_info` | Name, topic and participants of a group. |
 | `wa_download_media` | Download the media attached to a message and return it base64-encoded. |
 
-<!-- IMAGE: assets/07-claude-using-it.png — Claude calling the tools -->
+![Claude calling the WhatsApp tools: status, recent messages and a summary of the day](assets/07-claude-using-it.png)
 
 ---
 
@@ -274,6 +272,10 @@ Open <http://127.0.0.1:8100>. You will get a QR code — scan it with
 On localhost there is no token, no sign-in and nothing to configure: the server
 is open because only this machine can reach it. The QR is the front door.
 
+The chat view once history has synced:
+
+![The web UI: a chat list on the left and an open conversation on the right, with delivery ticks](assets/02-chats.png)
+
 #### Then wait
 
 History sync is not instant, and it matters more than it looks:
@@ -299,7 +301,7 @@ Claude or ChatGPT.
 Open the server and scan the QR with **WhatsApp → Settings → Linked devices →
 Link a device**. Nothing else works until a number is linked, so this is first.
 
-<!-- IMAGE: assets/01-pair-qr.png — the QR page, "Waiting for you to scan…" -->
+![The pairing page: a QR code to scan with WhatsApp, showing "Waiting for you to scan…"](assets/01-pair-qr.png)
 
 Wait for the sync to settle before moving on. The header says when it has.
 
@@ -317,7 +319,7 @@ That is the place to get it. The startup log prints it too, but a terminal you
 have closed is no help, and neither is one you never saw because the server runs
 as a service.
 
-<!-- IMAGE: assets/05-mcp-endpoint.png — Settings → Connect an AI client. REDACT THE TOKEN -->
+![Settings → Connect an AI client, showing the MCP endpoint with a Copy button](assets/05-mcp-endpoint.png)
 
 > Behind a tunnel the token is part of that URL, which makes the URL the whole
 > credential. Treat it like a password: anyone holding it can read and send on
@@ -328,7 +330,7 @@ as a service.
 **In Claude** — Settings → Connectors → **Add custom connector**. Give it a
 name, paste the URL, and Continue.
 
-<!-- IMAGE: assets/06-claude-add-connector.png — the Add custom connector dialog. REDACT THE TOKEN -->
+![Claude's Add custom connector dialog with the name and the MCP URL filled in](assets/06-claude-add-connector.png)
 
 **In ChatGPT** — Settings → Connectors → add an MCP server, same URL.
 
@@ -338,7 +340,7 @@ server over streamable HTTP, with nothing specific to one vendor.
 Once it connects, all 23 tools are available and the assistant can read and send
 on your number.
 
-<!-- IMAGE: assets/07-claude-using-it.png — Claude calling the tools -->
+![Claude calling the WhatsApp tools: status, recent messages and a summary of the day](assets/07-claude-using-it.png)
 
 #### If the connector will not connect
 

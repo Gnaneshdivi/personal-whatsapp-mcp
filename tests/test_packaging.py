@@ -222,15 +222,22 @@ def test_every_imported_package_is_declared():
 
 def test_referenced_images_exist():
     """A screenshot named in the docs but missing from assets/ renders as a
-    broken image on GitHub, which looks worse than having no screenshot."""
-    missing = []
+    broken image on GitHub, which looks worse than having no screenshot.
+
+    Resolved against the file doing the referencing, not the repo root: the
+    README says assets/x.png and docs/setup.md says ../assets/x.png, and both
+    are correct from where they sit.
+    """
+    problems = []
     for md in _markdown_files():
         for alt, link in re.findall(r"!\[([^\]]*)\]\(([^)]+)\)", md.read_text()):
             if link.startswith(("http://", "https://")):
                 continue
-            if not (ROOT / link.split("#")[0]).exists():
-                missing.append(f"{md.name}: {link}")
-    assert not missing, f"referenced but absent: {missing}"
+            if not (md.parent / link.split("#")[0]).exists():
+                problems.append(f"{md.name}: {link} is missing")
+            elif not alt.strip():
+                problems.append(f"{md.name}: {link} has no alt text")
+    assert not problems, problems
 
 
 def test_no_screenshot_leaks_the_access_token():
