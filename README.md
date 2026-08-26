@@ -58,7 +58,6 @@ with Python.
   - [You do not need a WhatsApp number](#you-do-not-need-a-whatsapp-number)
   - [One process, four layers](#one-process-four-layers)
   - [Where a change goes](#where-a-change-goes)
-  - [Things that will bite you](#things-that-will-bite-you)
   - [Tests](#tests)
   - [Good first things](#good-first-things)
 - [Frequently asked questions](#frequently-asked-questions)
@@ -1140,32 +1139,6 @@ rest testable without a phone or a server.
 | add a storage backend | implement `store/base.py`; the store tests run against every backend |
 | change the chat UI | `ui.py`. A test fails if a rendered class has no rule |
 | touch the WhatsApp socket | `whatsapp/client.py`, the one file that knows neonize exists |
-
-### Things that will bite you
-
-**`whatsapp/client.py` is 950 lines** and the least pleasant file here. It is
-one class because the neonize client, the event handlers and the session state
-are genuinely coupled — splitting it has to preserve that, not just move code.
-
-**Three backends implement one port.** A method added to `store/base.py` means
-three implementations. The store tests are parametrised over all three, so
-Postgres and Mongo are skipped unless a server is reachable — if you change
-storage, run them:
-
-```bash
-WA_TEST_POSTGRES=postgresql://localhost/wa_test \
-WA_TEST_MONGO=mongodb://localhost/wa_test pytest -q
-```
-
-**Schema changes must be additive.** `MIGRATIONS` in `store/sqlite.py` adds
-columns on open. Anything needing a rebuild would make users choose between
-upgrading and keeping their messages, and history cannot be re-fetched.
-
-**Some prompt text is not configurable on purpose** — the injection guard, the
-delivery clause, the anti-mirroring and anti-guessing rules in
-`trigger/backends.py`. Each exists because a specific failure reached a real
-person, and the comment above each says which. Please open an issue before
-moving one into settings.
 
 ### Tests
 
