@@ -46,4 +46,4 @@ jobs:
           python -m venv /tmp/clean
           /tmp/clean/bin/pip install dist/*.whl
           /tmp/clean/bin/python -c "import wa_mcp, wa_mcp.app"
-          /tmp/clean/bin/suprai-whatsapp-mcp --help > /dev/null
+          /tmp/clean/bin/personal-whatsapp-mcp --help > /dev/null

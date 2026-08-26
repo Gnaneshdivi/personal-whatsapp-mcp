@@ -13,7 +13,7 @@ class MongoStore(Store):
     def __init__(self, url: str):
         self.url = url
         name = (urlparse(url).path or "").lstrip("/")
-        self.db_name = name or "suprai_whatsapp"
+        self.db_name = name or "personal_whatsapp_mcp"
         self._client = None
         self.db = None
 

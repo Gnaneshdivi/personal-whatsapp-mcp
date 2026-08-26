@@ -3,14 +3,20 @@ requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "suprai-whatsapp-mcp"
+name = "personal-whatsapp-mcp"
 version = "0.2.0"
 description = "WhatsApp for any LLM: an MCP server, a web UI, and a configurable auto-reply — one number, one process."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-authors = [{ name = "SuprAI" }]
+authors = [
+    { name = "Divi Gnanesh", email = "divignanesh@gmail.com" },
+    { name = "Tejeshwar Reddy", email = "tejeshwarreddy25@gmail.com" },
+    { name = "Guddanti Jyotish Kumarr", email = "jyotishk359@gmail.com" },
+    { name = "Affaan Jaweed", email = "deadlyplatinum@gmail.com" },
+    { name = "Yangala Vamsi Krishna", email = "vamsikrishna8595@gmail.com" },
+]
 keywords = ["whatsapp", "mcp", "model context protocol", "llm", "agent",
             "chatbot", "auto-reply", "whatsmeow", "neonize"]
 
@@ -42,11 +48,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage      = "https://github.com/suprai/whatsapp-mcp"
-Repository    = "https://github.com/suprai/whatsapp-mcp"
-Documentation = "https://github.com/suprai/whatsapp-mcp/tree/main/docs"
-Changelog     = "https://github.com/suprai/whatsapp-mcp/blob/main/CHANGELOG.md"
-Issues        = "https://github.com/suprai/whatsapp-mcp/issues"
+Homepage      = "https://github.com/Gnaneshdivi/personal-whatsapp-mcp"
+Repository    = "https://github.com/Gnaneshdivi/personal-whatsapp-mcp"
+Documentation = "https://github.com/Gnaneshdivi/personal-whatsapp-mcp/tree/main/docs"
+Changelog     = "https://github.com/Gnaneshdivi/personal-whatsapp-mcp/blob/main/CHANGELOG.md"
+Issues        = "https://github.com/Gnaneshdivi/personal-whatsapp-mcp/issues"
 
 [project.optional-dependencies]
 postgres = ["asyncpg>=0.29"]
@@ -55,7 +61,7 @@ dev      = ["pytest>=8.0", "pytest-asyncio>=0.23", "anyio>=4.0", "asgi-lifespan>
             "asyncpg>=0.29", "motor>=3.4"]
 
 [project.scripts]
-suprai-whatsapp-mcp = "wa_mcp.__main__:main"
+personal-whatsapp-mcp = "wa_mcp.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["wa_mcp*"]

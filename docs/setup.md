@@ -20,7 +20,8 @@ Python.
 ## Install
 
 ```bash
-git clone <repo> && cd whatsapp-mcp
+git clone https://github.com/Gnaneshdivi/personal-whatsapp-mcp.git
+cd personal-whatsapp-mcp
 pip install -e ".[dev]"
 pytest -q
 ```
@@ -37,12 +38,12 @@ python -m build              # writes dist/*.whl and dist/*.tar.gz
 pip install dist/*.whl
 ```
 
-That puts a `suprai-whatsapp-mcp` command on your PATH, and it no longer needs
+That puts a `personal-whatsapp-mcp` command on your PATH, and it no longer needs
 the source directory:
 
 ```bash
-suprai-whatsapp-mcp                 # same options as run.py
-suprai-whatsapp-mcp --print-config
+personal-whatsapp-mcp               # same options as run.py
+personal-whatsapp-mcp --print-config
 ```
 
 Install it into a **virtual environment**, not system Python — it pulls in
@@ -73,7 +74,7 @@ what PyPI shows in the sidebar.
 
 ```bash
 python run.py                # from the source tree
-suprai-whatsapp-mcp          # if you installed the wheel
+personal-whatsapp-mcp        # if you installed the wheel
 ```
 
 `python -m wa_mcp` does the same thing. All three take the same options.
@@ -183,8 +184,8 @@ code runs inside a larger system.
 ## Docker
 
 ```bash
-docker build -t whatsapp-mcp .
-docker run -p 8100:8100 --env-file .env -v wa-data:/data whatsapp-mcp
+docker build -t personal-whatsapp-mcp .
+docker run -p 8100:8100 --env-file .env -v wa-data:/data personal-whatsapp-mcp
 ```
 
 **Mount the volume.** The session lives in `/data`. Losing it means re-pairing,

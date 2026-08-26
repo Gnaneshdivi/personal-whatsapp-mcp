@@ -21,7 +21,7 @@ def build_store(storage: Storage) -> Store:
         except ImportError as exc:
             raise SystemExit(
                 "WA_DATABASE_URL points at Postgres but the driver is missing.\n"
-                "  pip install 'suprai-whatsapp-mcp[postgres]'"
+                "  pip install 'personal-whatsapp-mcp[postgres]'"
             ) from exc
         return PostgresStore(storage.app_url)
     if storage.backend == "mongo":
@@ -30,7 +30,7 @@ def build_store(storage: Storage) -> Store:
         except ImportError as exc:
             raise SystemExit(
                 "WA_DATABASE_URL points at Mongo but the driver is missing.\n"
-                "  pip install 'suprai-whatsapp-mcp[mongo]'"
+                "  pip install 'personal-whatsapp-mcp[mongo]'"
             ) from exc
         return MongoStore(storage.app_url)
     raise SystemExit(f"unknown storage backend {storage.backend!r}")

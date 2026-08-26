@@ -6,6 +6,11 @@ Notable changes only. Dates are release dates.
 
 First release intended for anyone other than its author.
 
+The package is named `personal-whatsapp-mcp`: personal because it links one
+number that belongs to one person, and because it is not an official WhatsApp
+or Meta product. The command is `personal-whatsapp-mcp`, and application data
+lives in a `personal-whatsapp-mcp` directory under the platform's data path.
+
 ### Added
 - MCP server with 23 tools, a WhatsApp-Web-style UI, and auto-reply.
 - Auto-reply in two modes: an OpenAI-compatible model, or a webhook — either

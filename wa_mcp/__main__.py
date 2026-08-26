@@ -17,7 +17,7 @@ def _banner(settings: Settings, storage, token: str) -> str:
     )
     lines = [
         "",
-        "  suprai-whatsapp-mcp",
+        "  personal-whatsapp-mcp",
         "",
         f"  open        {base}/{key}",
         f"  MCP URL     {base}/mcp{key}",
@@ -80,7 +80,7 @@ def _mint_routine_token(storage) -> int:
 def main(argv: list[str] | None = None) -> int:
     env_file = _load_dotenv()
     p = argparse.ArgumentParser(
-        prog="suprai-whatsapp-mcp",
+        prog="personal-whatsapp-mcp",
         description="WhatsApp for any LLM — MCP server, web UI and auto-reply.",
     )
     p.add_argument("--host", default=None, help="default 127.0.0.1")

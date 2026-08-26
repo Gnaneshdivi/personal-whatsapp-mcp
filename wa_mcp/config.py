@@ -7,18 +7,22 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
+APP_DIR = "personal-whatsapp-mcp"
+
+
 def data_dir() -> Path:
     override = os.getenv("WA_DATA_DIR")
     if override:
         path = Path(override).expanduser()
-    elif sys.platform == "win32":
-        base = os.getenv("LOCALAPPDATA") or Path.home() / "AppData" / "Local"
-        path = Path(base) / "suprai-whatsapp"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    if sys.platform == "win32":
+        base = Path(os.getenv("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
     elif sys.platform == "darwin":
-        path = Path.home() / "Library" / "Application Support" / "suprai-whatsapp"
+        base = Path.home() / "Library" / "Application Support"
     else:
-        base = os.getenv("XDG_DATA_HOME") or Path.home() / ".local" / "share"
-        path = Path(base) / "suprai-whatsapp"
+        base = Path(os.getenv("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    path = base / APP_DIR
     path.mkdir(parents=True, exist_ok=True)
     return path
 

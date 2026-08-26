@@ -1,4 +1,9 @@
-# whatsapp-mcp
+# personal-whatsapp-mcp
+
+[![CI](https://github.com/Gnaneshdivi/personal-whatsapp-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Gnaneshdivi/personal-whatsapp-mcp/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
+[![MCP](https://img.shields.io/badge/MCP-23%20tools-purple)](https://modelcontextprotocol.io)
 
 WhatsApp for any LLM. One phone number, one process: an MCP server with 23
 tools, a web UI that looks like WhatsApp Web, and an auto-reply you configure
@@ -7,11 +12,20 @@ rather than code.
 No Redis, no database server, no Docker required. SQLite is the default and
 ships with Python.
 
+> **This project is independent and is not affiliated with WhatsApp or Meta.**
+> It links to your account the same way WhatsApp Web does, through
+> [whatsmeow](https://github.com/tulir/whatsmeow). Use it at your own risk:
+> WhatsApp's Terms of Service govern what you may do with your account, and
+> automating replies to real people is your responsibility, not this
+> project's.
+
 ---
 
 ## Quick start
 
 ```bash
+git clone https://github.com/Gnaneshdivi/personal-whatsapp-mcp.git
+cd personal-whatsapp-mcp
 pip install -e .
 python run.py
 ```
@@ -202,7 +216,7 @@ pip install -e ".[dev]"
 pytest -q
 ```
 
-385 tests. Postgres and Mongo suites skip unless `WA_TEST_POSTGRES` /
+397 tests. Postgres and Mongo suites skip unless `WA_TEST_POSTGRES` /
 `WA_TEST_MONGO` point at a server.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for what the tests are for and which
@@ -216,6 +230,23 @@ behaviour is deliberately not configurable.
 - Group participant names come from message metadata, so a silent member of a
   group may show as a number.
 
+## Built on
+
+This project is a thin layer over other people's hard work, and would not exist
+without it:
+
+- **[whatsmeow](https://github.com/tulir/whatsmeow)** (MPL-2.0) — the Go library
+  that speaks WhatsApp's multidevice protocol. Everything here that touches
+  WhatsApp ultimately goes through it.
+- **[neonize](https://github.com/krypton-byte/neonize)** (Apache-2.0) — the
+  Python bindings that make whatsmeow reachable from Python, via a CGO shared
+  library.
+- **[FastMCP](https://github.com/jlowin/fastmcp)** — the MCP server framework.
+
+All three are used as published dependencies. No code from any of them is
+vendored or modified here, so their licences apply to them rather than to this
+project.
+
 ## Licence
 
-Apache-2.0.
+Apache-2.0. See [LICENSE](LICENSE).
