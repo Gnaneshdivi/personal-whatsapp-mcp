@@ -122,15 +122,15 @@ def test_the_push_name_field_is_read_by_its_real_name():
     from wa_mcp.whatsapp.client import _push_name
 
     class Real:
-        Pushname = "Asif"
+        Pushname = "Marco"
 
     class Wrong:
-        PushName = "Asif"
+        PushName = "Marco"
 
     class Blank:
         Pushname = "   "
 
-    assert _push_name(Real()) == "Asif"
-    assert _push_name(Wrong()) == "Asif"
+    assert _push_name(Real()) == "Marco"
+    assert _push_name(Wrong()) == "Marco"
     assert _push_name(Blank()) is None
     assert _push_name(object()) is None

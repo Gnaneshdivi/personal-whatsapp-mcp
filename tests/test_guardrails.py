@@ -464,13 +464,13 @@ async def test_a_saved_config_from_before_the_mute_list_still_loads(rt):
 
 
 async def test_alerts_go_to_your_own_chat_when_route_is_me(rt):
-    rt.wa.self_jid = "919100828649@s.whatsapp.net"
+    rt.wa.self_jid = "919000000013@s.whatsapp.net"
     eng = TriggerEngine(rt)
     eng.settings = TriggerSettings.from_dict({
         "notify": {"route": "me", "on_keywords": ["urgent"]}})
     d = await eng.consider(inbound("urgent!!"))
-    assert d.notified == "919100828649@s.whatsapp.net"
-    assert any(to.startswith("919100828649") and "Needs you" in t
+    assert d.notified == "919000000013@s.whatsapp.net"
+    assert any(to.startswith("919000000013") and "Needs you" in t
                for to, t in rt.wa.sent)
 
 
@@ -518,7 +518,7 @@ async def test_a_config_saved_before_routes_existed_keeps_alerting(rt):
 
 
 async def test_the_alert_carries_a_tappable_link_to_the_chat(rt):
-    rt.wa.self_jid = "919100828649@s.whatsapp.net"
+    rt.wa.self_jid = "919000000013@s.whatsapp.net"
     eng = TriggerEngine(rt)
     eng.settings = TriggerSettings.from_dict({
         "notify": {"route": "me", "on_keywords": ["urgent"]}})

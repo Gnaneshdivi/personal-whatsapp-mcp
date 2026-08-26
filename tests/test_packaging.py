@@ -315,3 +315,20 @@ def test_the_readme_has_one_install_section():
     tops = re.findall(r"^## (.+)$", md, re.M)
     installish = [t for t in tops if re.search(r"\binstall\b", t, re.I)]
     assert len(installish) <= 1, f"more than one top-level install section: {installish}"
+
+
+def test_no_real_looking_phone_number_is_committed():
+    """Fixtures only ever needed a string, and a real number in a public repo
+    stays in the history after it is edited out of the files.
+
+    The safe shapes are the documentation ranges: 91900000xxxx here, and the
+    obviously-invented 919812345678 / 919999999999 / 919876543210.
+    """
+    allowed = re.compile(r"^(9190000000\d\d|919812345678|919999999999"
+                         r"|919876543210|919887654321|91900000000\d)$")
+    offenders = []
+    for path in list((ROOT / "tests").rglob("*.py")) + list((ROOT / "wa_mcp").rglob("*.py")):
+        for m in re.finditer(r"\b91[6-9]\d{9}\b", path.read_text()):
+            if not allowed.match(m.group(0)):
+                offenders.append(f"{path.name}: {m.group(0)}")
+    assert not offenders, f"real-looking phone numbers: {sorted(set(offenders))}"

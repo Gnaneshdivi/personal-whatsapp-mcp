@@ -4,8 +4,8 @@ from wa_mcp.whatsapp import jid as J
 
 
 def test_device_suffix_is_stripped():
-    assert J.normalise("919100828649:7@s.whatsapp.net") == "919100828649@s.whatsapp.net"
-    assert J.normalise("919100828649@s.whatsapp.net") == "919100828649@s.whatsapp.net"
+    assert J.normalise("919000000013:7@s.whatsapp.net") == "919000000013@s.whatsapp.net"
+    assert J.normalise("919000000013@s.whatsapp.net") == "919000000013@s.whatsapp.net"
 
 
 def test_the_same_person_from_two_devices_is_one_chat():
@@ -39,7 +39,7 @@ def test_phone_extraction():
 
 def test_modern_all_digit_group_ids_are_not_phone_numbers():
     assert J.phone("120363228197508350@g.us") == ""
-    assert J.phone("919980982358-1479370608@g.us") == ""
+    assert J.phone("919000000014-1700000000@g.us") == ""
 
 
 def test_to_jid_accepts_what_a_model_would_type():
@@ -52,10 +52,10 @@ def test_to_jid_accepts_what_a_model_would_type():
 
 def test_from_obj_renders_a_protobuf_jid():
     class FakeJID:
-        User = "919100828649:7"
+        User = "919000000013:7"
         Server = "s.whatsapp.net"
 
-    assert J.from_obj(FakeJID()) == "919100828649@s.whatsapp.net"
+    assert J.from_obj(FakeJID()) == "919000000013@s.whatsapp.net"
     assert J.from_obj(None) == ""
 
 
@@ -103,6 +103,6 @@ async def test_non_lid_never_hits_the_resolver():
 
 
 def test_normalise_strips_the_device_number_and_that_is_the_point():
-    device = "919100828649:9@s.whatsapp.net"
-    assert J.normalise(device) == "919100828649@s.whatsapp.net"
+    device = "919000000013:9@s.whatsapp.net"
+    assert J.normalise(device) == "919000000013@s.whatsapp.net"
     assert J.normalise(device) != device

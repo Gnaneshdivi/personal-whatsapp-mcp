@@ -6,7 +6,7 @@ import pytest
 
 from wa_mcp.delivery import REPLY_TOOLS, load, mint, refusal
 
-CHAT = "918790892969@s.whatsapp.net"
+CHAT = "919000000012@s.whatsapp.net"
 OTHER = "919999999999@s.whatsapp.net"
 
 
@@ -35,7 +35,7 @@ def test_it_cannot_message_a_different_number():
 
 def test_a_device_suffix_does_not_slip_past_the_check():
     assert refusal(rec(), "tools/call", "wa_send",
-                   {"to": "918790892969:9@s.whatsapp.net"}) is None
+                   {"to": "919000000012:9@s.whatsapp.net"}) is None
 
 
 @pytest.mark.parametrize("tool", [

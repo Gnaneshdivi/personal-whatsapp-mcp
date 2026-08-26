@@ -426,11 +426,11 @@ async def test_a_push_name_becomes_the_chat_name_when_there_is_none(store):
     chat = await store.get_chat("1@s.whatsapp.net")
     assert is_placeholder(chat.name)
 
-    await store.upsert_chat_meta("1@s.whatsapp.net", name="Asif")
+    await store.upsert_chat_meta("1@s.whatsapp.net", name="Marco")
     chat = await store.get_chat("1@s.whatsapp.net")
-    assert chat.name == "Asif"
+    assert chat.name == "Marco"
 
-    found = await store.list_chats(limit=10, query="asif")
+    found = await store.list_chats(limit=10, query="marco")
     assert [c.chat_jid for c in found] == ["1@s.whatsapp.net"]
 
 
@@ -532,35 +532,35 @@ async def _name_of(store, jid):
 async def test_a_chat_with_no_name_takes_the_senders_own(store, tmp_path):
     wa = _wa(store, tmp_path)
     await store.upsert_chat_meta("1@s.whatsapp.net")
-    await wa._adopt_push_name("1@s.whatsapp.net", _Src(), "Asif")
-    assert (await store.get_chat("1@s.whatsapp.net")).name == "Asif"
+    await wa._adopt_push_name("1@s.whatsapp.net", _Src(), "Marco")
+    assert (await store.get_chat("1@s.whatsapp.net")).name == "Marco"
 
 
 async def test_a_masked_number_is_replaced(store, tmp_path):
     wa = _wa(store, tmp_path)
     await store.upsert_chat_meta("1@s.whatsapp.net", name="+91∙∙∙∙∙∙∙∙88")
-    await wa._adopt_push_name("1@s.whatsapp.net", _Src(), "Asif")
-    assert (await store.get_chat("1@s.whatsapp.net")).name == "Asif"
+    await wa._adopt_push_name("1@s.whatsapp.net", _Src(), "Marco")
+    assert (await store.get_chat("1@s.whatsapp.net")).name == "Marco"
 
 
 async def test_a_name_the_owner_saved_always_wins(store, tmp_path):
-    wa = _wa(store, tmp_path, {"1@s.whatsapp.net": "Asif Bhai"})
+    wa = _wa(store, tmp_path, {"1@s.whatsapp.net": "Marco Bhai"})
     await store.upsert_chat_meta("1@s.whatsapp.net")
-    await wa._adopt_push_name("1@s.whatsapp.net", _Src(), "asif🔥")
+    await wa._adopt_push_name("1@s.whatsapp.net", _Src(), "marco🔥")
     assert await _name_of(store, "1@s.whatsapp.net") is None
 
 
 async def test_an_existing_real_name_is_not_overwritten(store, tmp_path):
     wa = _wa(store, tmp_path)
     await store.upsert_chat_meta("1@s.whatsapp.net", name="Accounts")
-    await wa._adopt_push_name("1@s.whatsapp.net", _Src(), "asif🔥")
+    await wa._adopt_push_name("1@s.whatsapp.net", _Src(), "marco🔥")
     assert (await store.get_chat("1@s.whatsapp.net")).name == "Accounts"
 
 
 async def test_a_group_never_takes_a_members_name(store, tmp_path):
     wa = _wa(store, tmp_path)
     await store.upsert_chat_meta("123-456@g.us")
-    await wa._adopt_push_name("123-456@g.us", _Src(), "Asif")
+    await wa._adopt_push_name("123-456@g.us", _Src(), "Marco")
     assert await _name_of(store, "123-456@g.us") is None
 
 

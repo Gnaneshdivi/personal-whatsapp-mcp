@@ -95,31 +95,31 @@ async def test_an_unknown_name_says_so(rt):
 async def test_someone_never_messaged_can_still_be_found(rt):
     from wa_mcp.app import _resolve_chat
 
-    rt.contacts._names = {"918056088288@s.whatsapp.net": "Akbar Ktr Srm"}
-    assert await _resolve_chat("Akbar Ktr Srm") == "918056088288@s.whatsapp.net"
-    assert await _resolve_chat("akbar ktr srm") == "918056088288@s.whatsapp.net"
+    rt.contacts._names = {"919000000010@s.whatsapp.net": "Rivera Costa Lima"}
+    assert await _resolve_chat("Rivera Costa Lima") == "919000000010@s.whatsapp.net"
+    assert await _resolve_chat("rivera costa lima") == "919000000010@s.whatsapp.net"
 
 
 async def test_a_chat_match_does_not_hide_other_contacts(rt):
     from wa_mcp.app import ToolError, _resolve_chat
 
-    await add(rt, "1@s.whatsapp.net", "Asif Akbar Brother")
-    rt.contacts._names = {"2@s.whatsapp.net": "Akbar Ktr Srm",
-                          "3@s.whatsapp.net": "Akbar Baig"}
+    await add(rt, "1@s.whatsapp.net", "Marco Rivera Brother")
+    rt.contacts._names = {"2@s.whatsapp.net": "Rivera Costa Lima",
+                          "3@s.whatsapp.net": "Rivera Santos"}
     with pytest.raises(ToolError) as e:
-        await _resolve_chat("akbar")
+        await _resolve_chat("rivera")
     msg = str(e.value)
     assert "3 chats or contacts match" in msg
-    for name in ("Asif Akbar Brother", "Akbar Ktr Srm", "Akbar Baig"):
+    for name in ("Marco Rivera Brother", "Rivera Costa Lima", "Rivera Santos"):
         assert name in msg
 
 
 async def test_an_exact_contact_name_still_wins(rt):
     from wa_mcp.app import _resolve_chat
 
-    await add(rt, "1@s.whatsapp.net", "Akbar Ktr Srm office")
-    rt.contacts._names = {"2@s.whatsapp.net": "Akbar Ktr Srm"}
-    assert await _resolve_chat("Akbar Ktr Srm") == "2@s.whatsapp.net"
+    await add(rt, "1@s.whatsapp.net", "Rivera Costa Lima office")
+    rt.contacts._names = {"2@s.whatsapp.net": "Rivera Costa Lima"}
+    assert await _resolve_chat("Rivera Costa Lima") == "2@s.whatsapp.net"
 
 
 async def test_a_contact_is_not_listed_twice_when_it_also_has_a_chat(rt):
@@ -137,17 +137,17 @@ def test_a_masked_number_is_not_a_name():
     assert is_placeholder("919812345678")
     assert is_placeholder("+91 98123 45678")
     assert is_placeholder("") and is_placeholder(None)
-    assert not is_placeholder("Akbar Ktr Srm")
+    assert not is_placeholder("Rivera Costa Lima")
 
 
 def test_the_address_book_beats_a_masked_chat_name():
     from wa_mcp.whatsapp.contacts import ContactBook
 
     b = ContactBook("/nonexistent")
-    b._names = {"918056088288@s.whatsapp.net": "Akbar Ktr Srm"}
+    b._names = {"919000000010@s.whatsapp.net": "Rivera Costa Lima"}
     masked = "+91∙∙∙∙∙∙∙∙88"
-    assert b.display_name("918056088288@s.whatsapp.net",
-                          chat_name=masked) == "Akbar Ktr Srm"
+    assert b.display_name("919000000010@s.whatsapp.net",
+                          chat_name=masked) == "Rivera Costa Lima"
 
 
 def test_a_masked_name_is_still_better_than_nothing():
@@ -155,19 +155,19 @@ def test_a_masked_name_is_still_better_than_nothing():
 
     b = ContactBook("/nonexistent")
     masked = "+91∙∙∙∙∙∙∙∙88"
-    assert b.display_name("918056088288@s.whatsapp.net",
+    assert b.display_name("919000000010@s.whatsapp.net",
                           chat_name=masked) == masked
 
 
 async def test_a_chat_named_only_by_a_mask_is_still_searchable(rt):
     from wa_mcp.app import ToolError, _resolve_chat
 
-    await add(rt, "918056088288@s.whatsapp.net",
+    await add(rt, "919000000010@s.whatsapp.net",
               "+91∙∙∙∙∙∙∙∙88")
-    await add(rt, "919705179198@s.whatsapp.net", "Asif Akbar Brother")
-    rt.contacts._names = {"918056088288@s.whatsapp.net": "Akbar Ktr Srm"}
+    await add(rt, "919000000011@s.whatsapp.net", "Marco Rivera Brother")
+    rt.contacts._names = {"919000000010@s.whatsapp.net": "Rivera Costa Lima"}
 
-    assert await _resolve_chat("Akbar Ktr Srm") == "918056088288@s.whatsapp.net"
+    assert await _resolve_chat("Rivera Costa Lima") == "919000000010@s.whatsapp.net"
     with pytest.raises(ToolError) as e:
-        await _resolve_chat("akbar")
+        await _resolve_chat("rivera")
     assert "2 chats or contacts match" in str(e.value)

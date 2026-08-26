@@ -119,7 +119,7 @@ async def test_nothing_happened_means_nothing_is_sent(rt):
 
     rt.trigger = TriggerEngine(rt)
     rt.trigger.settings = enabled(summary={"enabled": True, "route": "me"})
-    rt.wa.self_jid = "919100828649@s.whatsapp.net"
+    rt.wa.self_jid = "919000000013@s.whatsapp.net"
     assert await summary.run_once(rt) is None
     assert rt.wa.sent == []
 
@@ -135,7 +135,7 @@ async def test_a_summary_names_the_important_things_first(rt):
         return httpx.Response(200, json={"choices": [{"message": {
             "content": "Payment chased by Asif. Nothing else needs you."}}]})
 
-    await rt.store.upsert_chat_meta("911@s.whatsapp.net", name="Asif")
+    await rt.store.upsert_chat_meta("911@s.whatsapp.net", name="Marco")
     from wa_mcp.store.base import Message
     await rt.store.upsert_message(Message(
         message_id="x1", chat_jid="911@s.whatsapp.net", ts=int(time.time() * 1000),
@@ -147,7 +147,7 @@ async def test_a_summary_names_the_important_things_first(rt):
     rt.trigger.settings = enabled(summary={"enabled": True, "route": "me",
                                            "important": ["payment", "cancel"]})
     rt.trigger._http = None
-    rt.wa.self_jid = "919100828649@s.whatsapp.net"
+    rt.wa.self_jid = "919000000013@s.whatsapp.net"
 
     import wa_mcp.trigger.summary as S
     orig = S.reply_via_model
@@ -162,7 +162,7 @@ async def test_a_summary_names_the_important_things_first(rt):
     finally:
         S.reply_via_model = orig
 
-    assert target == "919100828649@s.whatsapp.net"
+    assert target == "919000000013@s.whatsapp.net"
     prompt = captured["body"]["messages"][-1]["content"]
     assert "payment" in prompt and "cancel" in prompt
     assert "Call these out FIRST" in prompt
@@ -174,7 +174,7 @@ async def test_the_window_advances_even_on_a_quiet_run(rt):
 
     rt.trigger = TriggerEngine(rt)
     rt.trigger.settings = enabled(summary={"enabled": True, "route": "me"})
-    rt.wa.self_jid = "919100828649@s.whatsapp.net"
+    rt.wa.self_jid = "919000000013@s.whatsapp.net"
     await summary.run_once(rt)
     state = await rt.store.get_kv(summary.STATE_KEY)
     assert state and state["at"] > 0
@@ -184,7 +184,7 @@ def test_where_a_summary_goes():
     from wa_mcp.trigger.summary import destination
 
     s = TriggerSettings.from_dict({"summary": {"route": "me"}})
-    assert destination(s, "919100828649@s.whatsapp.net") == "919100828649@s.whatsapp.net"
+    assert destination(s, "919000000013@s.whatsapp.net") == "919000000013@s.whatsapp.net"
 
     s = TriggerSettings.from_dict({"summary": {"route": "number",
                                                "jid": "919999999999"}})
@@ -301,10 +301,10 @@ async def test_group_chatter_is_not_treated_as_a_request(rt):
     from wa_mcp.store.base import Message
     from wa_mcp.trigger.summary import addressed_to_me
 
-    rt.wa.self_jid = "919100828649@s.whatsapp.net"
+    rt.wa.self_jid = "919000000013@s.whatsapp.net"
     m = Message(message_id="g1", chat_jid="1@g.us", ts=1,
                 text="I feel washing of vehicles should be stopped", is_from_me=False)
-    assert await addressed_to_me(rt, m, "919100828649") is False
+    assert await addressed_to_me(rt, m, "919000000013") is False
 
 
 async def test_a_shouty_broadcast_is_still_not_yours(rt):
@@ -313,7 +313,7 @@ async def test_a_shouty_broadcast_is_still_not_yours(rt):
 
     m = Message(message_id="g2", chat_jid="1@g.us", ts=1,
                 text="URGENT WATER CONSERVATION NOTICE", is_from_me=False)
-    assert await addressed_to_me(rt, m, "919100828649") is False
+    assert await addressed_to_me(rt, m, "919000000013") is False
 
 
 async def test_being_mentioned_makes_it_yours(rt):
@@ -321,8 +321,8 @@ async def test_being_mentioned_makes_it_yours(rt):
     from wa_mcp.trigger.summary import addressed_to_me
 
     m = Message(message_id="g3", chat_jid="1@g.us", ts=1,
-                text="@919100828649 bhai. Please review.", is_from_me=False)
-    assert await addressed_to_me(rt, m, "919100828649") is True
+                text="@919000000013 bhai. Please review.", is_from_me=False)
+    assert await addressed_to_me(rt, m, "919000000013") is True
 
 
 async def test_a_reply_to_something_you_said_makes_it_yours(rt):
@@ -335,7 +335,7 @@ async def test_a_reply_to_something_you_said_makes_it_yours(rt):
     m = Message(message_id="g4", chat_jid="1@g.us", ts=2,
                 text="It has to be credited from finance", is_from_me=False,
                 quoted_id="mine")
-    assert await addressed_to_me(rt, m, "919100828649") is True
+    assert await addressed_to_me(rt, m, "919000000013") is True
 
 
 async def test_a_reply_to_someone_else_is_not_yours(rt):
@@ -347,7 +347,7 @@ async def test_a_reply_to_someone_else_is_not_yours(rt):
         is_from_me=False))
     m = Message(message_id="g5", chat_jid="1@g.us", ts=2, text="yes",
                 is_from_me=False, quoted_id="theirs")
-    assert await addressed_to_me(rt, m, "919100828649") is False
+    assert await addressed_to_me(rt, m, "919000000013") is False
 
 
 async def test_direct_chats_are_never_filtered(rt):
@@ -357,9 +357,9 @@ async def test_direct_chats_are_never_filtered(rt):
     from wa_mcp.trigger.settings import TriggerSettings
     from wa_mcp.trigger.summary import collect
 
-    rt.wa.self_jid = "919100828649@s.whatsapp.net"
+    rt.wa.self_jid = "919000000013@s.whatsapp.net"
     ts = int(_t.time() * 1000)
-    await rt.store.upsert_chat_meta("911@s.whatsapp.net", name="Asif")
+    await rt.store.upsert_chat_meta("911@s.whatsapp.net", name="Marco")
     await rt.store.upsert_message(Message(
         message_id="d1", chat_jid="911@s.whatsapp.net", ts=ts,
         text="no mention, no quote", is_from_me=False))

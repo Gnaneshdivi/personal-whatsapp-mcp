@@ -27,7 +27,7 @@ async def client(tmp_path, monkeypatch):
 def paired(monkeypatch):
     from wa_mcp.app import RT
 
-    monkeypatch.setattr(RT.wa, "self_jid", "919100828649@s.whatsapp.net")
+    monkeypatch.setattr(RT.wa, "self_jid", "919000000013@s.whatsapp.net")
 
 
 async def rpc(c: httpx.AsyncClient, method: str, params: dict | None = None, id_: int = 1):
@@ -484,7 +484,7 @@ async def test_the_ui_can_read_a_contact_profile(client, monkeypatch):
     from wa_mcp.app import RT
 
     async def fake(jid):
-        return {"chat_jid": jid, "name": "Asif", "devices": 2,
+        return {"chat_jid": jid, "name": "Marco", "devices": 2,
                 "picture_url": "", "about": ""}
 
     monkeypatch.setattr(RT.wa, "profile", fake)
