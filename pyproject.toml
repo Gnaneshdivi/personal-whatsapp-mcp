@@ -8,7 +8,7 @@ version = "0.2.0"
 description = "Self-hosted WhatsApp MCP server: connect your personal WhatsApp number to Claude, ChatGPT or any LLM, with a web UI and configurable auto-reply."
 readme = "README.md"
 requires-python = ">=3.11"
-license = "Apache-2.0"
+license = "MIT"
 license-files = ["LICENSE"]
 authors = [
     { name = "Divi Gnanesh", email = "divignanesh@gmail.com" },

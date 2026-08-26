@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Gnaneshdivi/personal-whatsapp-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Gnaneshdivi/personal-whatsapp-mcp/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-23%20tools-purple)](https://modelcontextprotocol.io)
 
 **Connect your personal WhatsApp number to Claude, ChatGPT, or any
@@ -1384,4 +1384,4 @@ project.
 
 ## Licence
 
-Apache-2.0. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
