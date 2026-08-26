@@ -557,6 +557,7 @@ def build(rt, q: str, status: dict) -> str:
             f'</span></footer></div></div>')
 
     return ('<!doctype html><meta charset="utf-8"><title>Settings</title>'
+            '<link rel="icon" href="/favicon.svg" type="image/svg+xml">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
             f"<style>{CSS}</style>{body}"
             f"<script>const Q={json.dumps(q)};{JS}</script>")

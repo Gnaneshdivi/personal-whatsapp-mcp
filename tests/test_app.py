@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pathlib
+
 import httpx
 import pytest
 
@@ -499,3 +501,24 @@ async def test_a_profile_failure_is_reported_not_swallowed(client, monkeypatch):
     monkeypatch.setattr(RT.wa, "profile", boom)
     r = await client.get("/api/profile/1@s.whatsapp.net?k=t0ken")
     assert r.status_code == 502 and "no session" in r.json()["error"]
+
+
+def test_every_page_shell_points_at_a_favicon():
+    """Without one, a browser asks the host for /favicon.ico and shows nothing
+    when that 404s — so the tab, and a connector card that borrows the same
+    icon, fell back to the bare domain."""
+    from wa_mcp import web
+
+    assert web.FAVICON.lstrip().startswith("<svg")
+    assert 'rel="icon"' in web._page("Any", "<p>x</p>")
+
+    # index and settings write their own shell rather than going through _page
+    for name in ("wa_mcp/web.py", "wa_mcp/settings_ui.py"):
+        assert 'rel="icon"' in pathlib.Path(name).read_text(), name
+
+
+async def test_the_favicon_route_serves_an_svg(client):
+    r = await client.get("/favicon.svg")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("image/svg+xml")
+    assert r.text.lstrip().startswith("<svg")

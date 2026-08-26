@@ -86,8 +86,24 @@ def qr_svg(payload: str) -> str:
     return svg if isinstance(svg, str) else svg.decode()
 
 
+FAVICON = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
+    '<rect width="64" height="64" rx="14" fill="#25D366"/>'
+    '<path fill="#fff" d="M32 13c-10.5 0-19 8.5-19 19 0 3.4.9 6.6 2.5 9.4L13 51l9.9-2.4'
+    'c2.7 1.5 5.8 2.3 9.1 2.3 10.5 0 19-8.5 19-19S42.5 13 32 13zm0 34.4c-3 0-5.8-.8-8.2-2.3'
+    'l-.6-.3-5.9 1.4 1.5-5.7-.4-.6c-1.6-2.5-2.4-5.4-2.4-8.5 0-8.8 7.2-16 16-16s16 7.2 16 16'
+    '-7.2 16-16 16z"/>'
+    '<path fill="#fff" d="M41 36.6c-.5-.3-2.9-1.4-3.3-1.6-.4-.2-.8-.3-1.1.2-.3.5-1.2 1.6'
+    '-1.5 1.9-.3.3-.6.4-1.1.1-.5-.3-2-.8-3.9-2.4-1.4-1.3-2.4-2.8-2.7-3.3-.3-.5 0-.8.2-1.1'
+    '.2-.2.5-.6.8-.9.2-.3.3-.5.5-.9.2-.3.1-.6 0-.9-.1-.3-1.1-2.7-1.5-3.7-.4-.9-.8-.8-1.1-.8'
+    'h-.9c-.3 0-.9.1-1.3.6-.4.5-1.7 1.7-1.7 4s1.7 4.6 2 4.9c.2.3 3.4 5.2 8.2 7.1 4 1.6 4.8'
+    '1.3 5.7 1.2.9-.1 2.9-1.2 3.3-2.3.4-1.1.4-2.1.3-2.3-.1-.2-.4-.3-.9-.6z"/>'
+    "</svg>"
+)
+
 def _page(title: str, body: str) -> str:
     return (f'<!doctype html><meta charset="utf-8"><title>{_esc(title)}</title>'
+            f'<link rel="icon" href="/favicon.svg" type="image/svg+xml">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">'
             f"<style>{CSS}</style>{body}")
 
@@ -101,6 +117,10 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         k = request.query_params.get("k", "")
         return f"?k={k}" if k else ""
 
+    async def favicon(request):
+        return Response(FAVICON, media_type="image/svg+xml",
+                        headers={"Cache-Control": "public, max-age=604800"})
+
     async def index(request):
         st = rt.status()
         if not st["number"] and st["phase"] in ("unpaired", "logged_out"):
@@ -109,6 +129,7 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         from .ui import CSS as APP_CSS, shell
         return HTMLResponse(
             f'<!doctype html><meta charset="utf-8"><title>WhatsApp</title>'
+            f'<link rel="icon" href="/favicon.svg" type="image/svg+xml">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<style>{APP_CSS}</style>{shell(_q(request))}')
 
@@ -415,6 +436,7 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         Route("/api/read/{jid}", read_api, methods=["POST"]),
         Route("/api/status", status_api),
         Route("/settings", settings_page),
+        Route("/favicon.svg", favicon),
         Route("/logout", sign_out, methods=["GET", "POST"]),
         Route("/api/connect-info", connect_info),
         Route("/api/profile/{jid}", profile_api),

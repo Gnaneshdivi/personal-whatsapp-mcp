@@ -393,6 +393,8 @@ class Auth:
 
     SKIP = ("/.well-known/", "/register", "/authorize", "/token", "/revoke")
 
+    PUBLIC = ("/favicon.svg",)
+
     def __init__(self, app, token: str, rt=None, token_hint: str = ""):
         self.app, self.token = app, token
         self.rt = rt
@@ -403,6 +405,9 @@ class Auth:
             return await self.app(scope, receive, send)
 
         path = scope.get("path", "")
+
+        if path in self.PUBLIC:
+            return await self.app(scope, receive, send)
 
         if any(path.startswith(p) for p in self.SKIP):
             return await _plain(send, 404, b'{"error":"not_found"}')
