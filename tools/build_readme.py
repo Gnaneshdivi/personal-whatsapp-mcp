@@ -27,7 +27,7 @@ than code.
 No Redis, no database server, no Docker required. SQLite is the default and
 ships with Python.
 
-<!-- IMAGE 1: assets/banner.png -->
+<!-- IMAGE: assets/banner.png — optional wordmark -->
 
 > **This project is independent and is not affiliated with WhatsApp or Meta.**
 > It links to your account the same way WhatsApp Web does, through
@@ -81,7 +81,7 @@ lazy-loaded history, and search across both chats and message text.
 here, or your own webhook does — synchronously, or by handing the message over
 to an agent that answers in its own time.
 
-<!-- IMAGE 2: assets/web-ui.png -->
+<!-- IMAGE: assets/02-chats.png — the two-pane chat view -->
 
 ## What it is not
 
@@ -112,7 +112,7 @@ All 23 tools exposed at `/mcp`, callable from Claude or any MCP client.
 |---|---|
 {TOOLS}
 
-<!-- IMAGE 3: assets/claude-mcp.png -->
+<!-- IMAGE: assets/07-claude-using-it.png — Claude calling the tools -->
 
 ---
 """

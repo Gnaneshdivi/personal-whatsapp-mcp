@@ -218,3 +218,26 @@ def test_every_imported_package_is_declared():
                         and m.lower() not in declared)
     assert not undeclared, (
         f"imported but not declared in pyproject: {undeclared}")
+
+
+def test_referenced_images_exist():
+    """A screenshot named in the docs but missing from assets/ renders as a
+    broken image on GitHub, which looks worse than having no screenshot."""
+    missing = []
+    for md in _markdown_files():
+        for alt, link in re.findall(r"!\[([^\]]*)\]\(([^)]+)\)", md.read_text()):
+            if link.startswith(("http://", "https://")):
+                continue
+            if not (ROOT / link.split("#")[0]).exists():
+                missing.append(f"{md.name}: {link}")
+    assert not missing, f"referenced but absent: {missing}"
+
+
+def test_no_screenshot_leaks_the_access_token():
+    """The MCP endpoint shown in Settings carries the token, and the token is
+    the whole credential. A screenshot of that page published to a public repo
+    hands over the account, and deleting the file later does not help because
+    git keeps it."""
+    docs = " ".join(md.read_text() for md in _markdown_files())
+    leaked = re.findall(r"[?&]k=([A-Za-z0-9_-]{16,})", docs)
+    assert not leaked, f"a real-looking token appears in the docs: {leaked}"

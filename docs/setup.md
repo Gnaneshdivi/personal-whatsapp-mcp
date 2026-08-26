@@ -102,15 +102,65 @@ couple of minutes.
 
 ## Connecting an AI client
 
-Locally, the URL is all there is:
+Three steps, in this order. The first two happen here; the third happens in
+Claude or ChatGPT.
+
+### 1. Link your WhatsApp
+
+Open the server and scan the QR with **WhatsApp → Settings → Linked devices →
+Link a device**. Nothing else works until a number is linked, so this is first.
+
+<!-- IMAGE: assets/01-pair-qr.png — the QR page, "Waiting for you to scan…" -->
+
+Wait for the sync to settle before moving on. The header says when it has.
+
+### 2. Copy the MCP endpoint
+
+Go to **Settings → Connect an AI client**. It shows the full URL with a copy
+button:
 
 ```
-http://127.0.0.1:8100/mcp
+http://127.0.0.1:8100/mcp                 # on this machine
+https://your-host/mcp?k=<token>           # reachable from elsewhere
 ```
 
-**Settings → Connect an AI client** has it with a copy button. That is the place
-to get it — the startup log prints it too, but a terminal you have closed is no
-help, and neither is one you never saw because it runs as a service.
+That is the place to get it. The startup log prints it too, but a terminal you
+have closed is no help, and neither is one you never saw because the server runs
+as a service.
+
+<!-- IMAGE: assets/05-mcp-endpoint.png — Settings → Connect an AI client. REDACT THE TOKEN -->
+
+> Behind a tunnel the token is part of that URL, which makes the URL the whole
+> credential. Treat it like a password: anyone holding it can read and send on
+> your WhatsApp account. Do not paste it into a screenshot, an issue, or a chat.
+
+### 3. Add it as a connector
+
+**In Claude** — Settings → Connectors → **Add custom connector**. Give it a
+name, paste the URL, and Continue.
+
+<!-- IMAGE: assets/06-claude-add-connector.png — the Add custom connector dialog. REDACT THE TOKEN -->
+
+**In ChatGPT** — Settings → Connectors → add an MCP server, same URL.
+
+Any MCP client works the same way: this is a standard Model Context Protocol
+server over streamable HTTP, with nothing specific to one vendor.
+
+Once it connects, all 23 tools are available and the assistant can read and send
+on your number.
+
+<!-- IMAGE: assets/07-claude-using-it.png — Claude calling the tools -->
+
+### If the connector will not connect
+
+- **Check the URL ends in `/mcp`.** The bare host serves the web UI, not MCP.
+- **Check the token is on the URL** if the server is reachable from elsewhere.
+  Without it every request is a 401 and the client cannot tell you why.
+- **Open the URL in a browser.** `GET /mcp` returning *405 Method Not Allowed*
+  is correct and means the endpoint is alive — MCP requires POST.
+- **A generic icon next to the connector is not a fault.** Claude does not yet
+  render the icon a server advertises, so every custom connector shows the same
+  placeholder.
 
 ## Running it beyond this machine
 
