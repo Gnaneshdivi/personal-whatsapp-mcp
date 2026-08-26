@@ -24,8 +24,8 @@ Self-hosted, open source, and a single process. One phone number, 23 MCP tools,
 a web UI that looks like WhatsApp Web, and an auto-reply you configure rather
 than code.
 
-No Redis, no database server, no Docker required. SQLite is the default and
-ships with Python.
+No Redis, no database server, no build step. SQLite is the default and ships
+with Python.
 
 > **This project is independent and is not affiliated with WhatsApp or Meta.**
 > It links to your account the same way WhatsApp Web does, through
@@ -216,7 +216,7 @@ link someone to:
 
 | | |
 |---|---|
-| [docs/setup.md](docs/setup.md) | Install, pairing, storage, tunnels, Docker |
+| [docs/setup.md](docs/setup.md) | Install, pairing, storage, tunnels |
 | [docs/recipes.md](docs/recipes.md) | Step by step: an OpenAI-compatible model, and a Claude Routine |
 | [docs/auto-reply.md](docs/auto-reply.md) | The two modes, the prompt, choosing a model, the security model |
 | [docs/settings.md](docs/settings.md) | Every environment variable and all 64 auto-reply settings |

@@ -25,6 +25,12 @@ lives in a `personal-whatsapp-mcp` directory under the platform's data path.
   one chat, and a few minutes.
 - Storage on SQLite, Postgres or Mongo behind one setting.
 
+### Removed
+- The Dockerfile. Nothing built or tested it, so it would have rotted, and the
+  container needed a mounted volume to avoid losing a WhatsApp session that
+  cannot be re-fetched. `pip install` and `python run.py` are the supported
+  paths.
+
 ### Behaviour worth knowing
 - **Authentication is one bearer token**, given as a header or `?k=`. Not
   needed on loopback, generated and printed when reachable from elsewhere.

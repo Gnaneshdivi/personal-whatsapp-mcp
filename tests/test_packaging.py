@@ -47,7 +47,7 @@ def test_declared_dependencies_are_actually_imported():
 
 
 @pytest.mark.parametrize("name", ["README.md", "LICENSE", ".env.example",
-                                  "Dockerfile", ".dockerignore", ".gitignore",
+                                  ".gitignore",
                                   "CHANGELOG.md", "CONTRIBUTING.md",
                                   "SECURITY.md", ".github/workflows/ci.yml"])
 def test_the_files_a_deployment_needs_exist(name):
@@ -59,15 +59,6 @@ def test_pyproject_readme_points_at_a_real_file():
     pyproject = (ROOT / "pyproject.toml").read_text()
     m = re.search(r'readme\s*=\s*"([^"]+)"', pyproject)
     assert m and (ROOT / m.group(1)).is_file()
-
-
-def test_the_dockerfile_installs_libmagic():
-    assert "libmagic" in (ROOT / "Dockerfile").read_text()
-
-
-def test_the_dockerfile_persists_the_session():
-    df = (ROOT / "Dockerfile").read_text()
-    assert "VOLUME" in df and "WA_DATA_DIR" in df
 
 
 DOCS = ["setup.md", "settings.md", "auto-reply.md",
@@ -248,3 +239,25 @@ def test_no_screenshot_leaks_the_access_token():
     docs = " ".join(md.read_text() for md in _markdown_files())
     leaked = re.findall(r"[?&]k=([A-Za-z0-9_-]{16,})", docs)
     assert not leaked, f"a real-looking token appears in the docs: {leaked}"
+
+
+def test_the_release_workflow_matches_the_declared_version():
+    """The release tag and pyproject's version have to agree, or the artifact
+    on the release page is named differently from the one on PyPI. The workflow
+    checks it; this checks the workflow still does."""
+    wf = (ROOT / ".github" / "workflows" / "release.yml").read_text()
+    assert "does not match pyproject version" in wf
+    assert 'tags: ["v*"]' in wf
+
+
+def test_publishing_cannot_happen_by_accident():
+    """Publishing is irreversible: a version number on PyPI can never be
+    reused, even after deleting it. The pypi job is gated on an environment
+    that does not exist until someone creates it deliberately."""
+    wf = (ROOT / ".github" / "workflows" / "release.yml").read_text()
+    pypi = wf.split("  pypi:", 1)[1]
+    assert "environment: pypi" in pypi
+    assert "if: github.ref_type == 'tag'" in pypi
+    # Trusted publishing, so no long-lived token is stored anywhere
+    assert "id-token: write" in pypi
+    assert "password:" not in wf and "PYPI_API_TOKEN" not in wf

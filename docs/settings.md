@@ -20,7 +20,7 @@ UI; this page is the same information, written down.
 | `WA_AUTH_TOKEN` | — | Not needed on loopback, where it runs open. Created in the database and shown at startup when reachable from elsewhere, and stable across restarts. `MCP_AUTH_TOKEN` is an alias. |
 | `WA_ALLOW_OPEN` | `0` | Run with no authentication even when reachable. Only for a network you trust. |
 | `PUBLIC_BASE_URL` | — | Tells the server it is reachable from elsewhere, so it protects itself and prints the right link. Set it to the tunnel's address. |
-| `WA_HOST` | `127.0.0.1` | In Docker this must be `0.0.0.0` or nothing outside the container can reach it. |
+| `WA_HOST` | `127.0.0.1` | Set `0.0.0.0` to accept connections from other machines; doing so makes the server generate a token. |
 | `WA_PORT` | `8100` | |
 | `WA_DATABASE_URL` | *unset* | Unset → SQLite. See [setup](setup.md#storage). |
 | `WA_DATA_DIR` | OS data dir | Where SQLite files, the session and cached media live. |

@@ -235,18 +235,6 @@ code runs inside a larger system.
 > SQLAlchemy's three-slash form implies. A relative database silently created
 > next to whatever directory you happened to start in is worse than an error.
 
-## Docker
-
-```bash
-docker build -t personal-whatsapp-mcp .
-docker run -p 8100:8100 --env-file .env -v wa-data:/data personal-whatsapp-mcp
-```
-
-**Mount the volume.** The session lives in `/data`. Losing it means re-pairing,
-and re-pairing means the message archive starts over — history syncs once.
-
-The image is glibc-based on purpose: neonize ships a CGO shared library, and
-Alpine's musl fails at import time rather than at build time.
 
 ## Upgrading
 

@@ -12,8 +12,8 @@ Self-hosted, open source, and a single process. One phone number, 23 MCP tools,
 a web UI that looks like WhatsApp Web, and an auto-reply you configure rather
 than code.
 
-No Redis, no database server, no Docker required. SQLite is the default and
-ships with Python.
+No Redis, no database server, no build step. SQLite is the default and ships
+with Python.
 
 > **This project is independent and is not affiliated with WhatsApp or Meta.**
 > It links to your account the same way WhatsApp Web does, through
@@ -37,7 +37,6 @@ ships with Python.
   - [Running it beyond this machine](#running-it-beyond-this-machine)
   - [Configuration](#configuration)
   - [Storage](#storage)
-  - [Docker](#docker)
   - [Upgrading](#upgrading)
   - [Command line](#command-line)
   - [Logging out](#logging-out)
@@ -422,18 +421,6 @@ code runs inside a larger system.
 > SQLAlchemy's three-slash form implies. A relative database silently created
 > next to whatever directory you happened to start in is worse than an error.
 
-### Docker
-
-```bash
-docker build -t personal-whatsapp-mcp .
-docker run -p 8100:8100 --env-file .env -v wa-data:/data personal-whatsapp-mcp
-```
-
-**Mount the volume.** The session lives in `/data`. Losing it means re-pairing,
-and re-pairing means the message archive starts over — history syncs once.
-
-The image is glibc-based on purpose: neonize ships a CGO shared library, and
-Alpine's musl fails at import time rather than at build time.
 
 ### Upgrading
 
@@ -953,7 +940,7 @@ UI; this page is the same information, written down.
 | `WA_AUTH_TOKEN` | — | Not needed on loopback, where it runs open. Created in the database and shown at startup when reachable from elsewhere, and stable across restarts. `MCP_AUTH_TOKEN` is an alias. |
 | `WA_ALLOW_OPEN` | `0` | Run with no authentication even when reachable. Only for a network you trust. |
 | `PUBLIC_BASE_URL` | — | Tells the server it is reachable from elsewhere, so it protects itself and prints the right link. Set it to the tunnel's address. |
-| `WA_HOST` | `127.0.0.1` | In Docker this must be `0.0.0.0` or nothing outside the container can reach it. |
+| `WA_HOST` | `127.0.0.1` | Set `0.0.0.0` to accept connections from other machines; doing so makes the server generate a token. |
 | `WA_PORT` | `8100` | |
 | `WA_DATABASE_URL` | *unset* | Unset → SQLite. See [setup](docs/setup.md#storage). |
 | `WA_DATA_DIR` | OS data dir | Where SQLite files, the session and cached media live. |
@@ -1347,7 +1334,7 @@ link someone to:
 
 | | |
 |---|---|
-| [docs/setup.md](docs/setup.md) | Install, pairing, storage, tunnels, Docker |
+| [docs/setup.md](docs/setup.md) | Install, pairing, storage, tunnels |
 | [docs/recipes.md](docs/recipes.md) | Step by step: an OpenAI-compatible model, and a Claude Routine |
 | [docs/auto-reply.md](docs/auto-reply.md) | The two modes, the prompt, choosing a model, the security model |
 | [docs/settings.md](docs/settings.md) | Every environment variable and all 64 auto-reply settings |
