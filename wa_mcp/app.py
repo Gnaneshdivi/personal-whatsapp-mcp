@@ -417,7 +417,8 @@ class Auth:
 
     SKIP = ("/.well-known/", "/register", "/authorize", "/token", "/revoke")
 
-    PUBLIC = ("/favicon.png", "/apple-touch-icon.png")
+    PUBLIC = ("/favicon.ico", "/favicon.png", "/icon.png",
+              "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png")
 
     def __init__(self, app, token: str, rt=None, token_hint: str = ""):
         self.app, self.token = app, token

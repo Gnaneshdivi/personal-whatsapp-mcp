@@ -91,7 +91,17 @@ def _static(name: str) -> bytes:
     return (files("wa_mcp") / "static" / name).read_bytes()
 
 
-FAVICON_TYPES = {"favicon.png": "image/png", "apple-touch-icon.png": "image/png"}
+# favicon.ico is the path a browser asks for when the page never said
+# otherwise, and plenty of clients probe it before reading any markup. Serving
+# the png bytes there is fine: every browser sniffs the content, and none of
+# them has required real ICO for years.
+ICONS = {
+    "favicon.ico": "favicon.png",
+    "favicon.png": "favicon.png",
+    "icon.png": "favicon.png",
+    "apple-touch-icon.png": "apple-touch-icon.png",
+    "apple-touch-icon-precomposed.png": "apple-touch-icon.png",
+}
 
 def _page(title: str, body: str) -> str:
     return (f'<!doctype html><meta charset="utf-8"><title>{_esc(title)}</title>'
@@ -110,10 +120,10 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         return f"?k={k}" if k else ""
 
     async def favicon(request):
-        name = request.url.path.lstrip("/")
-        if name not in FAVICON_TYPES:
+        name = ICONS.get(request.url.path.lstrip("/"))
+        if name is None:
             return PlainTextResponse("not found", status_code=404)
-        return Response(_static(name), media_type=FAVICON_TYPES[name],
+        return Response(_static(name), media_type="image/png",
                         headers={"Cache-Control": "public, max-age=604800"})
 
     async def index(request):
@@ -431,8 +441,7 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         Route("/api/read/{jid}", read_api, methods=["POST"]),
         Route("/api/status", status_api),
         Route("/settings", settings_page),
-        Route("/favicon.png", favicon),
-        Route("/apple-touch-icon.png", favicon),
+        *[Route(f"/{n}", favicon) for n in ICONS],
         Route("/logout", sign_out, methods=["GET", "POST"]),
         Route("/api/connect-info", connect_info),
         Route("/api/profile/{jid}", profile_api),

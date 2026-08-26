@@ -526,6 +526,21 @@ def test_the_icons_ship_inside_the_package():
         assert len(blob) < 60_000, f"{name} is {len(blob)} bytes — too big to serve"
 
 
+async def test_every_icon_route_is_reachable_without_a_token(client):
+    """/favicon.ico is what a browser asks for when the markup never said
+    otherwise, and what several clients probe before reading any markup. Ours
+    answered 401 there while /favicon.png was fine, so anything that guessed
+    the conventional path saw no icon at all."""
+    from wa_mcp.app import Auth
+    from wa_mcp.web import ICONS
+
+    for name in ICONS:
+        r = await client.get(f"/{name}")
+        assert r.status_code == 200, f"/{name} -> {r.status_code}"
+        assert r.headers["content-type"].startswith("image/png"), name
+        assert f"/{name}" in Auth.PUBLIC, f"/{name} is not exempt from auth"
+
+
 async def test_the_icon_routes_serve_their_own_file(client):
     """Both routes point at one handler. It has to tell them apart — reading
     the name from path_params gives an empty dict for a static route, so the
