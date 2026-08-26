@@ -1,31 +1,6 @@
-"""The chat client: two panes, live updates, and history that pages as you scroll.
-
-Server-rendered shell plus vanilla JS against the JSON endpoints. No build step,
-because a `node_modules` in the install path of a `pip install` tool is the
-difference between someone trying it and closing the tab.
-
-Three things drive the layout, and each is a correctness concern rather than a
-cosmetic one:
-
-**Nothing outside the message list scrolls.** The panes are a fixed grid and
-only `.msgs` has `overflow-y`. Letting the page scroll means the composer and
-the chat list drift off-screen while you read history, which is what makes a
-long conversation feel broken.
-
-**Paging up preserves scroll position.** Older messages are prepended, and the
-scroll offset is restored by measuring `scrollHeight` before and after — without
-that the viewport jumps to the top the instant a page loads, and you lose the
-message you were reading.
-
-**Live messages only auto-scroll if you were already at the bottom.** Yanking
-someone down to a new message while they are reading last week is the single
-most irritating thing a chat UI can do.
-"""
 from __future__ import annotations
 
 ICONS = {
-    # Stroked 24x24 paths, currentColor. Emoji render differently on every
-    # platform and cannot be recoloured for an active state.
     "chats": '<path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.5 8.5 0 0 1-3.8-.9L3 21l1.9-5.2A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/>',
     "settings": '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 9 4.6a2 2 0 1 1 4 0 1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 11a2 2 0 1 1 0 4z"/>',
     "tick": '<path d="M2 12.5 7 17l4-4"/>',

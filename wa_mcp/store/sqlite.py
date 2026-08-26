@@ -1,18 +1,3 @@
-"""SQLite backend — the default, and the one almost everyone will run.
-
-Raw aiosqlite rather than an ORM. The schema is small, the queries are short,
-and FTS5 needs hand-written DDL anyway; an ORM would add a layer to debug
-without removing a line of SQL.
-
-Two things carry the design:
-
-  WAL mode          the web UI reads while the socket writes. Without it every
-                    read blocks behind the writer and the chat list stutters.
-  FTS5, external    full-text search over `messages.text`. Postgres can index an
-                    expression in place; SQLite cannot, so the index is a
-                    separate virtual table kept in sync by triggers. Verified:
-                    phrases, NOT, prefix and bm25 ranking all behave.
-"""
 from __future__ import annotations
 
 import json
@@ -27,14 +12,6 @@ from .base import Chat, Message, Store, split_query, status_rank
 log = logging.getLogger(__name__)
 
 def _json_meta(meta: dict | None) -> str | None:
-    """Serialise media metadata without ever aborting the write.
-
-    A dict assembled from a protobuf can pick up a value json cannot encode —
-    bytes, most often. Losing the metadata for one attachment is a blemish;
-    raising here loses the message, and on the history path every message after
-    it in that conversation, which is how 6,354 messages arrived with zero
-    attachments among them. Anything unencodable is stringified instead.
-    """
     if not meta:
         return None
     try:
@@ -119,7 +96,6 @@ class SQLiteStore(Store):
         self.path = str(path)
         self._db: aiosqlite.Connection | None = None
 
-    # ------------------------------------------------------------- lifecycle
 
     async def connect(self) -> None:
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
@@ -129,15 +105,6 @@ class SQLiteStore(Store):
         await self._migrate()
         await self._db.commit()
 
-    # Columns added after the first release. CREATE TABLE IF NOT EXISTS does
-    # nothing to a table that already exists, so a new field is invisible to an
-    # existing database and every query referencing it fails.
-    #
-    # This exists because the alternative was taken once: the database was
-    # deleted to pick up a new column, and 6,225 messages went with it. History
-    # sync only ever runs at pair time, so that data could not be recovered
-    # without unlinking the number and scanning again. Additive migrations are
-    # not a nicety here — losing the store means losing history permanently.
     MIGRATIONS = (
         ("messages", "status", "TEXT NOT NULL DEFAULT 'sent'"),
         ("messages", "status_at", "INTEGER"),
@@ -161,18 +128,12 @@ class SQLiteStore(Store):
                 f"SELECT COUNT(*) AS n FROM {table}")).fetchone()
             counts[table] = int(row["n"])
             await self.db.execute(f"DELETE FROM {table}")
-        # The FTS index is external-content: its triggers fire on delete, but
-        # rebuilding is what actually reclaims the space and guarantees no
-        # orphaned rows survive to be returned by a later search.
         try:
             await self.db.execute(
                 "INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
         except Exception:
             pass
         await self.db.commit()
-        # No VACUUM: it cannot run inside a transaction, and aiosqlite keeps
-        # one open, so it hangs rather than erroring. The rows are gone; the
-        # file staying its old size until SQLite reuses the pages is cosmetic.
         return counts
 
     async def list_kv(self, prefix: str) -> list[str]:
@@ -193,16 +154,8 @@ class SQLiteStore(Store):
             raise RuntimeError("store used before connect()")
         return self._db
 
-    # ---------------------------------------------------------------- writes
 
     async def upsert_message(self, m: Message) -> bool:
-        """INSERT OR IGNORE on the unique message_id.
-
-        Idempotency belongs in the index, not in a cache. WhatsApp redelivers on
-        reconnect and history sync replays the same ids; an evictable marker
-        would let duplicates through the moment memory pressure hit, whereas a
-        unique constraint cannot be evicted.
-        """
         cur = await self.db.execute(
             f"INSERT OR IGNORE INTO messages ({_COLS}, raw_proto) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -225,8 +178,6 @@ class SQLiteStore(Store):
         await self.db.commit()
 
     async def apply_revoke(self, message_id: str, ts: int) -> None:
-        # Tombstone rather than delete: the row is history a model may already
-        # have cited, and a vanished message reads as a bug.
         await self.db.execute(
             "UPDATE messages SET revoked_at = ?, text = NULL, media_ref = NULL "
             "WHERE message_id = ?",
@@ -313,12 +264,6 @@ class SQLiteStore(Store):
         return cur.rowcount
 
     async def set_unread(self, chat_jid: str, count: int) -> None:
-        """Absolute, not incremental — this is read state arriving from the phone.
-
-        Without it our count only ever climbs, because reading a chat on the
-        handset is invisible to us otherwise, and the badges drift away from
-        what the user sees on WhatsApp Web.
-        """
         await self.db.execute(
             "INSERT INTO chats (chat_jid, unread_count) VALUES (?, ?) "
             "ON CONFLICT(chat_jid) DO UPDATE SET unread_count = excluded.unread_count",
@@ -326,7 +271,6 @@ class SQLiteStore(Store):
         )
         await self.db.commit()
 
-    # ----------------------------------------------------------------- reads
 
     async def list_chats(self, *, limit: int = 30, archived: bool = False,
                          query: str | None = None, kind: str = "all") -> list[Chat]:
@@ -364,11 +308,6 @@ class SQLiteStore(Store):
             sql += " AND ts >= ?"; args.append(from_ts)
         if to_ts is not None:
             sql += " AND ts <= ?"; args.append(to_ts)
-        # id breaks the tie. WhatsApp timestamps are second-resolution — every
-        # ts ends in 000 — so two messages sent in the same second compare
-        # equal and come back in whatever order the engine feels like. The
-        # disclosure and the reply it precedes land in the same second, and the
-        # thread showed them the wrong way round against WhatsApp itself.
         sql += " ORDER BY ts DESC, id DESC LIMIT ?"
         args.append(limit)
         rows = await (await self.db.execute(sql, args)).fetchall()
@@ -382,17 +321,8 @@ class SQLiteStore(Store):
     async def search(self, query: str, *, chat_jid: str | None = None,
                      limit: int = 25, from_ts: int | None = None,
                      to_ts: int | None = None) -> list[Message]:
-        """FTS5 MATCH ranked by bm25.
-
-        The query string is passed through, so callers get FTS5 syntax for free:
-        "quoted phrases", NOT exclusion, prefix* and OR. That is close enough to
-        what Postgres' websearch_to_tsquery accepts that a model writing one
-        query for both backends generally gets what it meant.
-        """
         include, exclude = split_query(query)
         if not include:
-            # FTS5 has no way to say "everything except X"; without a positive
-            # term there is nothing to rank against.
             return []
         query = " ".join(include) + ("".join(f" NOT {e}" for e in exclude))
 
@@ -413,14 +343,6 @@ class SQLiteStore(Store):
         try:
             rows = await (await self.db.execute(sql, args)).fetchall()
         except aiosqlite.OperationalError:
-            # FTS5 rejects malformed queries, and the failure modes are varied
-            # enough ("fts5: syntax error", "unterminated string", "unknown
-            # special query") that matching on the message is a losing game.
-            #
-            # So retry the whole thing as one quoted literal, which is always
-            # valid syntax. A user typing  it's fine  or an unbalanced quote
-            # then gets a plain substring search rather than an empty result
-            # they cannot explain — degraded, but still an answer.
             args[0] = _as_literal(query)
             try:
                 rows = await (await self.db.execute(sql, args)).fetchall()
@@ -429,11 +351,6 @@ class SQLiteStore(Store):
         return [_msg(r) for r in rows]
 
     async def thread_around(self, message_id: str, radius: int = 15) -> list[Message]:
-        """Two bounded scans outward from the anchor.
-
-        Cost stays proportional to `radius` instead of to how busy the chat is,
-        which one wide BETWEEN range would not give us.
-        """
         anchor = await (await self.db.execute(
             "SELECT chat_jid, ts FROM messages WHERE message_id = ?", (message_id,)
         )).fetchone()
@@ -456,7 +373,6 @@ class SQLiteStore(Store):
             "SELECT COALESCE(SUM(unread_count),0) AS n FROM chats")).fetchone()
         return int(row["n"])
 
-    # -------------------------------------------------------------------- kv
 
     async def get_kv(self, key: str) -> dict[str, Any] | None:
         row = await (await self.db.execute(
@@ -485,11 +401,6 @@ def _msg(r: aiosqlite.Row) -> Message:
     )
 
 
-# The chat list needs the newest message's status so the sidebar can show the
-# same ticks as the thread. Derived here rather than cached on the chat row:
-# a receipt lands long after the message did, and the two would drift.
-# Both subqueries seek ix_messages_chat_ts(chat_jid, ts DESC), so this costs
-# two index lookups per returned row -- a page of chats, never a scan.
 _LAST_MESSAGE = """
     (SELECT m.is_from_me FROM messages m
       WHERE m.chat_jid = chats.chat_jid ORDER BY m.ts DESC LIMIT 1) AS last_from_me,
@@ -511,14 +422,8 @@ def _chat(r: aiosqlite.Row) -> Chat:
 
 
 def _opt(r: aiosqlite.Row, key: str):
-    """Columns only the chat-list query selects; other callers pass plain rows."""
     return r[key] if key in r.keys() else None
 
 
 def _as_literal(query: str) -> str:
-    """The query as one FTS5 phrase, which is always parseable.
-
-    FTS5 escapes a double quote by doubling it, so this cannot itself be
-    malformed no matter what the user typed.
-    """
     return '"' + query.replace('"', '""') + '"'

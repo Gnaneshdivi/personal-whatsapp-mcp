@@ -1,15 +1,3 @@
-"""The /events stream.
-
-This endpoint returned 500 for the entire build. It was constructed with
-Starlette's plain `Response`, which treats its first argument as a body rather
-than something to iterate, so every live update the server produced was thrown
-away and the UI silently degraded to its background poll. Nothing caught it
-because no test ever read the response: the route existed, the handler was
-correct, and the browser's EventSource retries a failed connection quietly.
-
-So these assert the two things that were actually broken — that the response
-streams at all, and that an emitted event reaches a reader.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -24,13 +12,6 @@ from wa_mcp.config import Settings, resolve_storage
 
 @pytest.fixture
 async def server(tmp_path, monkeypatch):
-    """A real uvicorn server, not an in-process ASGI transport.
-
-    httpx's ASGITransport joins the whole body before returning a response, so
-    a stream that never ends never returns -- and, more to the point, an
-    endpoint that streams and one that doesn't look identical through it. That
-    is the exact distinction under test, so this binds a real port.
-    """
     monkeypatch.delenv("WA_DATABASE_URL", raising=False)
     settings = Settings(host="127.0.0.1", port=0, auth_token="t0ken")
     storage = resolve_storage("", tmp_path)
@@ -57,7 +38,6 @@ async def server(tmp_path, monkeypatch):
 
 
 async def _read_events(client, token, *, want: int, timeout: float = 8.0):
-    """Collect parsed SSE frames until `want` of them arrive."""
     frames, buf = [], ""
     async with client.stream("GET", f"/events?k={token}") as resp:
         assert resp.status_code == 200, "the stream must not error"
@@ -88,12 +68,6 @@ async def _read_events(client, token, *, want: int, timeout: float = 8.0):
 
 
 async def test_the_stream_opens_and_leads_with_status(server):
-    """A freshly loaded page must learn the state without waiting for a tick.
-
-    The banner is hidden by a status event. If the first one only arrives after
-    a delay -- or never -- the page shows a stale "Syncing" bar over a
-    connection that has been ready for hours.
-    """
     client, token, runtime = server
     frames = await _read_events(client, token, want=1)
     assert frames, "no frames at all -- the response is not streaming"
@@ -102,7 +76,6 @@ async def test_the_stream_opens_and_leads_with_status(server):
 
 
 async def test_an_emitted_event_reaches_the_browser(server):
-    """The whole point: something the runtime emits shows up on the wire."""
     client, token, runtime = server
 
     async def emit_soon():
@@ -122,11 +95,6 @@ async def test_an_emitted_event_reaches_the_browser(server):
 
 
 async def test_a_burst_is_not_metered_out_one_per_tick(server):
-    """Receipts arrive in groups.
-
-    Draining one event per two-second tick meant a dozen ticked messages took
-    half a minute to update -- long enough to read as "ticks are broken".
-    """
     client, token, runtime = server
 
     async def emit_burst():
@@ -137,7 +105,6 @@ async def test_a_burst_is_not_metered_out_one_per_tick(server):
                 "chat_jid": "1@s.whatsapp.net"})
 
     task = asyncio.create_task(emit_burst())
-    # Five events plus the leading status, well inside a single 2s window.
     frames = await _read_events(client, token, want=6, timeout=3.0)
     await task
 

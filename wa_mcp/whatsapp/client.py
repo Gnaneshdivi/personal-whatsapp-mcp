@@ -1,25 +1,3 @@
-"""The WhatsApp socket — one number, one process.
-
-What this is not, compared to the multi-pod design it replaces: there is no
-ownership lease, no fencing token, no Redis, no heartbeat and no pod registry.
-All of that existed to stop two processes opening a socket on one number. With
-a single process the guarantee is structural, and ~800 lines of coordination go
-away.
-
-What survives, because none of it was about scale:
-
-  * the send-side token bucket — ban protection is a WhatsApp concern
-  * the RETRY-receipt resend — whatsmeow's retry buffer is never populated
-  * JID normalisation and LID resolution — or one chat becomes three
-  * every handler individually guarded — one bad payload must not take the
-    socket down
-
-Device selection uses ClientFactory with an EXPLICIT JID. `NewAClient(dsn)` with
-no jid loads whichever device the store happens to hold, which is how a second
-client ends up authenticating as the first, drawing StreamReplaced and panicking
-the Go layer — taking the whole process with it, since a Go panic cannot be
-caught from Python.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -39,10 +17,6 @@ from .sync import Phase, SyncTracker
 
 log = logging.getLogger(__name__)
 
-# Ban protection. Deliberately not configurable: an open-source tool whose
-# first-run default lets someone blast a contact list is a tool that gets its
-# users banned. Bursts are refused rather than queued, because a queue that
-# drains later is the same traffic pattern with a delay.
 SEND_PER_SECOND = 1.0
 SEND_BURST = 5
 
@@ -54,7 +28,6 @@ class _TokenBucket:
         self._last = time.monotonic()
 
     def take(self) -> float:
-        """0 if allowed, else seconds to wait."""
         now = time.monotonic()
         self._tokens = min(self._burst, self._tokens + (now - self._last) * self._rate)
         self._last = now
@@ -65,14 +38,6 @@ class _TokenBucket:
 
 
 def _push_name(info) -> str | None:
-    """The name someone has set for themselves, off a message.
-
-    The protobuf field is `Pushname` — one capital, in the middle of a message
-    whose other fields are `MessageSource`, `ServerID`, `MediaType`. Reading it
-    as `PushName` or `pushName` returns the getattr default instead of raising,
-    so it looked like nobody on WhatsApp had ever set a name. Every spelling is
-    tried rather than trusting one.
-    """
     for attr in ("Pushname", "PushName", "pushName", "push_name"):
         value = (getattr(info, attr, "") or "").strip()
         if value:
@@ -81,50 +46,36 @@ def _push_name(info) -> str | None:
 
 
 class WhatsApp:
-    """Owns the socket, the event pipeline and the send path for one number."""
 
     def __init__(self, *, session_dsn: str, store, settings,
                  contacts: ContactBook | None = None,
                  session_is_file: bool = True,
                  on_event: Callable[[str, dict], Awaitable[None]] | None = None):
         self.session_dsn = session_dsn
-        # Whether the session is a file we may delete, or Postgres tables whose
-        # schema this process does not own.
         self.session_is_file = session_is_file
         self.store = store
         self.settings = settings
-        # `contacts or ContactBook(...)` is wrong: ContactBook defines
-        # __len__, so an empty one is FALSY and the caller's book gets silently
-        # replaced by a second instance. The client then loads 2,614 names into
-        # an object nobody else holds, and every chat renders as a phone number
-        # while the log cheerfully reports the contacts were loaded.
         self.contacts = contacts if contacts is not None else ContactBook(session_dsn)
         self._on_event = on_event
 
         self.sync = SyncTracker()
-        self.self_jid: str = ""      # normalised, for chat keys and display
-        self.device_jid = None       # raw protobuf, what whatsmeow needs
+        self.self_jid: str = ""
+        self.device_jid = None
         self.push_name: str = ""
         self.qr: str | None = None
         self.qr_issued_at: float = 0.0
 
-        self._client = None          # neonize NewAClient
+        self._client = None
         self._factory = None
         self._bucket = _TokenBucket(SEND_PER_SECOND, SEND_BURST)
         self._resolver = J.Resolver()
-        self._retried: dict[str, float] = {}   # bounded, see _mark_retried
+        self._retried: dict[str, float] = {}
         self._tasks: list[asyncio.Task] = []
         self._stopped = asyncio.Event()
         self.load_error: str | None = None
-        # One pairing attempt at a time, process-wide. Two clients on one
-        # session store is the failure this whole codebase is arranged to
-        # avoid: they both connect, their QR refs invalidate each other, one
-        # of them pairs, and the UI ends up watching the other — which is
-        # exactly what happened the first time this ran for real.
         self._pair_lock = asyncio.Lock()
         self._pairing = False
 
-    # ==================================================== lifecycle
 
     def _build_factory(self):
         from neonize.aioze.client import ClientFactory
@@ -132,14 +83,6 @@ class WhatsApp:
 
     @staticmethod
     def preflight() -> str | None:
-        """Why neonize cannot load, in words someone can act on.
-
-        neonize imports python-magic at module load, which dlopens the native
-        libmagic. When that is absent the failure surfaces as an ImportError
-        deep inside a pairing attempt — which, swallowed, looks exactly like a
-        QR that never arrives. Checking at startup turns a mystery into an
-        install command.
-        """
         try:
             import neonize  # noqa: F401
             return None
@@ -155,18 +98,6 @@ class WhatsApp:
             return f"neonize cannot be imported: {type(exc).__name__}: {exc}"
 
     def _device_jids(self) -> list:
-        """The raw JID protobufs from the session store.
-
-        Raw, and never round-tripped through a string. A device JID carries a
-        device NUMBER — 919100828649:9 — and `J.normalise` strips it, because
-        for a chat key the suffix is noise that splits one conversation into
-        several. Hand that stripped form back to whatsmeow and it finds no such
-        device, returns nil, and NewClient dereferences it: a Go panic that
-        takes the whole process down, since Python cannot catch one.
-
-        Two correct-looking functions, opposite requirements. Keeping the
-        protobuf means the question never comes up.
-        """
         try:
             self._factory = self._factory or self._build_factory()
             return [d.JID for d in self._factory.get_all_devices() if d.HasField("JID")]
@@ -176,43 +107,25 @@ class WhatsApp:
             return []
 
     def paired_devices(self) -> list[str]:
-        """Human-readable JIDs of linked devices. For display and for tests.
-
-        A failure here used to be logged at debug and returned as [] — which is
-        indistinguishable from "not paired yet", so a broken install presented
-        as an install that simply never finished pairing.
-        """
         return [J.from_obj(j) for j in self._device_jids()]
 
     async def start(self) -> bool:
-        """Connect the already-paired number. False when there is nothing to connect."""
         devices = self._device_jids()
         if not devices:
             self.sync.unpaired()
             return False
 
         device = devices[0]
-        self.device_jid = device                 # raw, for whatsmeow
-        self.self_jid = J.from_obj(device)       # normalised, for chats and display
+        self.device_jid = device
+        self.self_jid = J.from_obj(device)
         self._open(device=device)
         self.sync.connecting()
         await self._connect()
         return True
 
     async def pair(self) -> None:
-        """Open a provisional socket with no device, so WhatsApp issues a QR.
-
-        Raises with an actionable message rather than hanging when the native
-        dependency is missing.
-
-        `jid=None` is correct here and ONLY here — it is the one case where we
-        genuinely have no device yet. Everywhere else an explicit JID is what
-        stops a second client hijacking the first.
-        """
         async with self._pair_lock:
             if self._pairing:
-                # Already offering a code. The caller gets that one rather than
-                # a rival socket whose QR would invalidate it.
                 return
             blocked = self.preflight()
             if blocked:
@@ -227,24 +140,15 @@ class WhatsApp:
             await self._connect()
 
     def _open(self, device=None) -> None:
-        """Build the neonize client. `device` is a raw JID protobuf, or None to
-        pair a new one — the only case where no device is correct."""
         from neonize.proto.waCompanionReg.WAWebProtobufsCompanionReg_pb2 import DeviceProps
 
         self._factory = self._factory or self._build_factory()
 
         props = None
         if self.settings.device_os:
-            # neonize announces os="Neonize" by default, which tells WhatsApp
-            # the account is automation-driven. Only changeable by pairing
-            # afresh, so it is set here rather than anywhere later.
             props = DeviceProps(
                 os=self.settings.device_os,
                 platformType=DeviceProps.PlatformType.Value(self.settings.device_platform),
-                # Ask for history explicitly. The default gives a few recent
-                # days, which leaves a freshly paired install showing a chat
-                # list of empty conversations. This is a pair-time decision and
-                # cannot be revisited without unlinking.
                 requireFullSync=True,
                 historySyncConfig=DeviceProps.HistorySyncConfig(
                     fullSyncDaysLimit=self.settings.history_days,
@@ -275,23 +179,11 @@ class WhatsApp:
                 log.warning("disconnect: %s", exc)
 
     async def logout(self, purge: bool = True) -> dict[str, Any]:
-        """Unlink the device and, by default, delete everything it collected.
-
-        Keeping the archive after unlinking leaves a full copy of somebody's
-        conversations on disk for an account this server can no longer reach.
-        It cannot be refreshed, cannot be corrected, and is still readable by
-        anyone who gets the file — so logging out clears it.
-
-        Irreversible either way: WhatsApp sends history exactly once, at pair
-        time, so what is deleted here cannot be fetched again by pairing.
-        """
         out: dict[str, Any] = {"status": "logged_out"}
         if self._client is not None:
             try:
                 await self._client.logout()
             except Exception as exc:
-                # An unlink that fails still has to clear local state, or the
-                # data survives a logout the user believes succeeded.
                 log.warning("unlink failed, clearing local state anyway: %s", exc)
                 out["unlink_error"] = str(exc)
         self.sync.logged_out()
@@ -305,12 +197,6 @@ class WhatsApp:
         return out
 
     def _clear_session(self) -> bool:
-        """Remove whatsmeow's own store, so no device identity is left behind.
-
-        Only when it is a file. On Postgres the session lives in tables this
-        process does not own the schema of, and dropping them is not ours to
-        do — the unlink above is what matters there.
-        """
         from pathlib import Path
 
         if not self.session_is_file:
@@ -327,12 +213,10 @@ class WhatsApp:
         return removed
 
     async def _settle_loop(self) -> None:
-        """Drives SyncTracker.tick(), which closes a sync that never completed."""
         while not self._stopped.is_set():
             was_ready = self.sync.state.ready
             self.sync.tick()
             if self.sync.state.ready and not was_ready:
-                # One last read once everything has landed.
                 try:
                     log.info("contacts: %d known after sync",
                              await self.contacts.load())
@@ -348,7 +232,6 @@ class WhatsApp:
             except asyncio.TimeoutError:
                 pass
 
-    # ==================================================== event wiring
 
     def _wire(self) -> None:
         import neonize.events as NE
@@ -356,12 +239,9 @@ class WhatsApp:
         for name in SUBSCRIBED:
             cls = getattr(NE, name, None)
             if cls is None:
-                continue          # absent from this neonize build
+                continue
             self._register(cls, name)
 
-        # The QR does NOT arrive through @event(QREv). neonize routes it to a
-        # separate callback whose default implementation prints ASCII art to a
-        # terminal — useless to a server.
         @self._client.qr
         async def _on_qr(_c, data: bytes):
             try:
@@ -379,9 +259,6 @@ class WhatsApp:
             try:
                 await self._dispatch(_name, ev)
             except Exception:
-                # One malformed payload must never take the number offline. The
-                # exception would otherwise be orphaned in a future nobody
-                # awaits, since these arrive via run_coroutine_threadsafe.
                 log.exception("handler %s failed", _name)
 
     async def _dispatch(self, name: str, ev) -> None:
@@ -415,7 +292,6 @@ class WhatsApp:
 
         await self._emit(event_type_for(name), {})
 
-    # ------------------------------------------------------------- handlers
 
     async def _on_connected(self, _ev) -> None:
         self.sync.connected()
@@ -429,18 +305,11 @@ class WhatsApp:
             except Exception:
                 pass
         if not self.push_name:
-            # The device row carries it even when the contact lookup does not.
-            # Without a name the prompt reads "answering on behalf of me", so
-            # the model has no idea who it is and copies its tone — and its form
-            # of address — straight out of the other person's messages.
             self.push_name = self._own_push_name()
         loaded = await self.contacts.load()
         log.info("connected as %s (%d contacts)", self.self_jid or "?", loaded)
         if loaded:
             await self.persist_contact_names()
-        # Group names arrive ONLY via group events, which do not always fire.
-        # Asking outright is the difference between a readable chat list and 31
-        # rows of numeric ids.
         self._tasks.append(asyncio.create_task(self._backfill_group_names()))
 
     async def _on_paired(self, ev) -> None:
@@ -453,14 +322,6 @@ class WhatsApp:
             await self._emit("connection.paired", {"phone_jid": jid})
 
     async def _on_history(self, ev) -> None:
-        """Ingest a history chunk: past conversations and their messages.
-
-        Without this a fresh pairing shows a chat list and empty conversations
-        until someone happens to write to you — no recents, no ordering, no
-        pinned state, because every one of those comes from a message we never
-        stored. Live traffic alone cannot reconstruct it: WhatsApp sends your
-        history exactly once, here.
-        """
         data = getattr(ev, "Data", None)
         if data is None:
             return
@@ -478,15 +339,11 @@ class WhatsApp:
             try:
                 stored += await self._ingest_conversation(conv)
             except Exception:
-                # One malformed conversation must not abandon the rest of the
-                # chunk — this is the only delivery of that history.
                 log.exception("history conversation failed")
         if stored:
             log.info("history: %d messages from %d conversations (%s)",
                      stored, len(conversations), name.lower())
             await self.store.rebuild_rollups()
-        # whatsmeow fills its contact store while history streams in, so the
-        # book has to be re-read as it goes or every chat stays a phone number.
         before = len(self.contacts)
         after = await self.contacts.refresh_if_stale()
         if after > before:
@@ -529,10 +386,6 @@ class WhatsApp:
             sender = J.normalise(getattr(info, "participant", "") or
                                  (self.self_jid if from_me else chat))
 
-            # History carries the real delivery state. Defaulting it to "sent"
-            # puts a single tick on a message that was read a year ago, which
-            # is worse than showing nothing: it is confidently wrong, and an
-            # agent deciding whether to follow up would act on it.
             wa_status = _enum_name(info, "status")
             status = {"DELIVERY_ACK": "delivered", "READ": "read",
                       "PLAYED": "played"}.get(wa_status, "sent")
@@ -553,9 +406,6 @@ class WhatsApp:
                 newest_ts = ts
                 newest_preview = text or (f"[{msg_type}]" if msg_type != "text" else None)
 
-        # One rollup per conversation rather than per message: touch_chat
-        # increments unread, and replaying history through it would invent an
-        # unread count of several hundred for a chat you have already read.
         if newest_ts:
             await self.store.touch_chat(chat, newest_ts, True, newest_preview)
         unread = int(getattr(conv, "unreadCount", 0) or 0)
@@ -563,7 +413,6 @@ class WhatsApp:
         return count
 
     async def _on_group(self, name: str, ev) -> None:
-        """Group names nest differently on the two events that carry them."""
         try:
             if name == "GroupInfoEv":
                 chat = J.from_obj(getattr(ev, "JID", None))
@@ -578,18 +427,6 @@ class WhatsApp:
             log.exception("group event %s", name)
 
     async def propagate_read_status(self) -> int:
-        """Mark everything before a read message in the same chat as read.
-
-        Not a guess: opening a conversation marks it read up to that point, so
-        a later message being READ means every earlier one was too. History
-        arrives without per-message status for older entries, which left a
-        year of messages showing one grey tick beside a reply that is plainly
-        marked read — visibly wrong, and misleading to anything deciding
-        whether to follow up.
-
-        Written against the port rather than as three dialects of SQL: it runs
-        once after a sync, so clarity beats a marginal amount of speed.
-        """
         fixed = 0
         for chat in await self.store.list_chats(limit=5000):
             msgs = await self.store.get_messages(chat.chat_jid, limit=500)
@@ -607,7 +444,6 @@ class WhatsApp:
         return fixed
 
     def _own_push_name(self) -> str:
-        """Our own display name, read from whatsmeow's device row."""
         import sqlite3
 
         try:
@@ -626,17 +462,6 @@ class WhatsApp:
             return ""
 
     async def persist_contact_names(self) -> int:
-        """Write address-book names into chats.name.
-
-        The contact book lives in memory, so a WHERE clause could never see it
-        — searching "jyotish" returned nothing while the list plainly showed
-        "Vja Jyotish". Rather than filter in Python and have two answers to the
-        same question, the resolved name is written down, and SQLite becomes
-        the single source of truth for search.
-
-        Only fills blanks. A name that arrived from WhatsApp itself, or that a
-        user set, outranks the address book and is left alone.
-        """
         written = 0
         for chat in await self.store.list_chats(limit=5000):
             if chat.name:
@@ -688,9 +513,6 @@ class WhatsApp:
                 await self.store.apply_revoke(target, ts)
             return
 
-        # Protocol artifacts — sender-key rotation, app-state sync — arrive
-        # through the same event as real messages and were ~40% of raw traffic.
-        # Forwarded as events, never stored as messages.
         if not extract.is_content_message(body):
             return
         if J.is_ignorable(chat):
@@ -708,22 +530,10 @@ class WhatsApp:
             text=extract.extract_text(body) or None,
             media_meta=media or {},
             quoted_id=extract.quoted_message_id(body),
-            # Media messages ALWAYS keep their bytes, regardless of the flag.
-            # Decrypting an attachment later needs the original protobuf — the
-            # keys live in it — so without this, download_media can never work
-            # and every image in the history is permanently unreachable.
-            # Measured on a real account: media is 16% of messages, so this
-            # costs little, while storing every text message's protobuf was
-            # half the table.
             raw_proto=(body.SerializeToString()
                        if (self.settings.store_raw_proto or media) else None),
         ))
         preview = extract.extract_text(body) or (f"[{msg_type}]" if msg_type != "text" else None)
-        # The rollup is refreshed even for a message we already had. A redelivery
-        # still tells us the chat is active, and returning early here is how 35
-        # conversations ended up holding today's messages behind a NULL
-        # timestamp — sorted to the bottom of the list. `from_me=True` on the
-        # duplicate path so the unread count is not incremented twice.
         await self.store.touch_chat(chat, ts, bool(src.IsFromMe) or not stored, preview)
         if not stored:
             return
@@ -738,13 +548,6 @@ class WhatsApp:
         })
 
     def _mentions_me(self, body) -> bool:
-        """Whether this message @-mentions us.
-
-        Group replies are gated on this by default, so a false negative means a
-        silent bot and a false positive means an unwanted one. Mentions live in
-        contextInfo.mentionedJID on whichever sub-message carries the text, so
-        the unwrapped body is what has to be inspected.
-        """
         if not self.self_jid:
             return False
         me = J.normalise(self.self_jid).split("@")[0]
@@ -760,20 +563,10 @@ class WhatsApp:
         return False
 
     async def _on_receipt(self, ev) -> None:
-        """Answer RETRY receipts by resending from our own store.
-
-        whatsmeow is meant to re-encrypt the original from whatsmeow_retry_buffer,
-        but neonize never populates that table — verified at 0 rows against an
-        account with 1,920 messages. With nothing to resend, the first message to
-        a new contact sits on one tick forever.
-        """
         kind = _enum_name(ev, "Type")
         ids = [m for m in (getattr(ev, "MessageIDs", None) or [])]
         log.debug("receipt %s for %d id(s)", kind or "<blank>", len(ids))
 
-        # Delivery status. This is what lets an agent act on "they read it" —
-        # a message arriving is one signal, a message being READ is a different
-        # and often more useful one.
         status = {"DELIVERED": "delivered", "READ": "read",
                   "READ_SELF": "read", "PLAYED": "played",
                   "PLAYED_SELF": "played"}.get(kind)
@@ -782,9 +575,6 @@ class WhatsApp:
             moved = await self.store.set_status(ids, status, ts)
             if moved:
                 log.info("%s: %d message(s)", status, len(moved))
-                # One event per real transition, not per receipt: WhatsApp
-                # resends receipts, and an agent setting a reminder on "read"
-                # must not get three.
                 await self._emit(f"message.{status}", {
                     "message_ids": moved,
                     "chat_jid": await self._resolver.canonical(
@@ -809,13 +599,10 @@ class WhatsApp:
             except Exception as exc:
                 log.error("resend failed: %s", exc)
                 continue
-            # The resend gets a NEW id and will draw its own RETRY. Without
-            # marking it too, one message became five in seven seconds.
             if sent.get("message_id"):
                 self._mark_retried(sent["message_id"])
 
     def _mark_retried(self, message_id: str) -> None:
-        """Bounded. The old implementation grew this set for process lifetime."""
         self._retried[message_id] = time.monotonic()
         if len(self._retried) > 2000:
             for k, _ in sorted(self._retried.items(), key=lambda kv: kv[1])[:1000]:
@@ -834,7 +621,6 @@ class WhatsApp:
         user = lid.split("@")[0]
         return self._client.get_pn_from_lid(build_jid(user, J.LID_SERVER))
 
-    # ==================================================== send path
 
     def _guard(self) -> None:
         if self._client is None or self.sync.state.phase in (Phase.UNPAIRED, Phase.LOGGED_OUT):
@@ -916,7 +702,6 @@ class WhatsApp:
         return {"status": "ok", "marked": len(ids)}
 
     async def set_typing(self, chat_jid: str, typing: bool = True) -> dict:
-        """Typing indicator. Cheap, and it is what makes an auto-reply read as human."""
         self._guard()
         from neonize.utils.enum import ChatPresence, ChatPresenceMedia
         await self._client.send_chat_presence(
@@ -936,7 +721,6 @@ class WhatsApp:
         return {"phone": phone, "jid": jid or None, "on_whatsapp": bool(jid)}
 
     async def group_info(self, chat_jid: str) -> dict:
-        """Name, topic and participants, asked of WhatsApp directly."""
         self._guard()
         info = await self._client.get_group_info(self._jid(chat_jid))
         name = getattr(getattr(info, "GroupName", None), "Name", None) or getattr(info, "Name", "")
@@ -949,20 +733,8 @@ class WhatsApp:
                 "participants": people, "participant_count": len(people)}
 
     async def _adopt_push_name(self, chat: str, src, push_name: str | None) -> None:
-        """Keep the name someone set for themselves, when we have nothing else.
-
-        An unsaved number has no entry in the address book, so the chat renders
-        as +91∙∙∙∙∙∙∙∙88 for someone whose name arrives on every message they
-        send. Storing it is what makes them findable by name and readable in
-        the list.
-
-        Only for one-to-one chats: in a group the push name belongs to whoever
-        sent that message, not to the group.
-        """
         if not push_name or bool(src.IsFromMe) or J.is_group(chat):
             return
-        # Never over a real name. The address book is what the owner chose;
-        # this is only for chats that have nothing.
         if self.contacts.get(chat):
             return
         existing = await self.store.get_chat(chat)
@@ -975,22 +747,6 @@ class WhatsApp:
         log.debug("named %s from its push name: %s", chat, push_name)
 
     async def profile(self, chat_jid: str) -> dict[str, Any]:
-        """Whatever WhatsApp will say about someone.
-
-        Separate from the contact book, which holds the name YOU saved. This is
-        what they publish: a business name if the account is verified, how many
-        devices they have linked, and a photo.
-
-        `about` is in the protobuf and comes back empty for every contact tried
-        on a live account — whether whatsmeow does not populate it, or the
-        server withholds it, is not something this layer can tell. It is
-        returned as it arrives rather than dropped, so it starts working if
-        that changes upstream.
-
-        One call for one person. get_user_info takes several JIDs, but the
-        result is keyed by a JID protobuf rather than a string, so unpicking a
-        batch is fiddler than it is worth for a per-contact lookup.
-        """
         self._guard()
         jid = self._jid(chat_jid)
         out: dict[str, Any] = {"chat_jid": J.normalise(chat_jid)}
@@ -1005,8 +761,6 @@ class WhatsApp:
                 continue
             out["about"] = getattr(info, "Status", "") or ""
             verified = getattr(info, "VerifiedName", None)
-            # A business account carries its verified name in a nested
-            # certificate; an ordinary one has the field but nothing in it.
             name = getattr(getattr(verified, "Details", None), "verifiedName", "")
             if name:
                 out["business_name"] = name
@@ -1018,18 +772,10 @@ class WhatsApp:
             pic = await self._client.get_profile_picture(jid)
             out["picture_url"] = getattr(pic, "URL", "") or ""
         except Exception:
-            # Common and not an error: plenty of people have no photo, or
-            # restrict it to contacts.
             out["picture_url"] = ""
         return out
 
     async def avatar_url(self, chat_jid: str) -> str | None:
-        """The profile picture URL for a chat, or None if there is not one.
-
-        Asked of WhatsApp per chat rather than bulk-fetched: most chats in a
-        list are never opened, and a request per contact at startup is both slow
-        and exactly the traffic pattern that draws rate limiting.
-        """
         if self._client is None:
             return None
         try:
@@ -1040,11 +786,6 @@ class WhatsApp:
         return getattr(info, "URL", None) or getattr(info, "url", None) or None
 
     async def download_media(self, message_id: str) -> bytes | None:
-        """Fetch media on demand.
-
-        On demand rather than eagerly: the first user with a 4 GB history would
-        otherwise fill their disk before the UI finished loading.
-        """
         row = await self.store.get_message(message_id)
         if row is None or not row.media_meta:
             return None
@@ -1062,17 +803,6 @@ class WhatsApp:
 
     async def _record(self, jid, resp, text: str, kind: str,
                       blob: bytes | None = None) -> dict:
-        """Persist our own send.
-
-        WhatsApp does not echo a device's own messages back to that device, so
-        without this the model reads a conversation containing only one side.
-
-        For media, the bytes we just uploaded are cached here under the message
-        id. The download path decrypts an incoming attachment from its stored
-        protobuf, and a send has no such protobuf — so without this our own
-        images were rows the media route answered 404 for, and the conversation
-        showed a caption with nothing above it.
-        """
         message_id = getattr(resp, "ID", "") or ""
         ts = to_ms(getattr(resp, "Timestamp", 0))
         chat = J.from_obj(jid)
@@ -1093,7 +823,6 @@ class WhatsApp:
                 "text": text, "status": "sent"}
 
     def _cache_outgoing(self, message_id: str, blob: bytes) -> str | None:
-        """Put our own attachment where the media route looks for it."""
         try:
             from ..config import data_dir
             cache = data_dir() / "media"
@@ -1102,8 +831,6 @@ class WhatsApp:
             path.write_bytes(blob)
             return str(path)
         except OSError as exc:
-            # A full or read-only disk must not fail a message that WhatsApp
-            # has already accepted.
             log.warning("could not cache sent media %s: %s", message_id, exc)
             return None
 
@@ -1112,7 +839,7 @@ _MAGIC = (
     (b"\xff\xd8\xff", "image/jpeg"),
     (b"\x89PNG\r\n\x1a\n", "image/png"),
     (b"GIF8", "image/gif"),
-    (b"RIFF", "image/webp"),          # also wav; the kind below disambiguates
+    (b"RIFF", "image/webp"),
     (b"%PDF-", "application/pdf"),
     (b"OggS", "audio/ogg"),
     (b"ID3", "audio/mpeg"),
@@ -1122,12 +849,6 @@ _BY_KIND = {"image": "image/jpeg", "video": "video/mp4", "audio": "audio/ogg",
 
 
 def _sniff_mime(blob: bytes, kind: str) -> str:
-    """Content type for something we are sending.
-
-    The caller says "image"; the browser needs to know which. Guessing from the
-    kind alone renders a PNG as a broken JPEG in some viewers, and the first
-    few bytes settle it without a dependency.
-    """
     head = blob[:16]
     for magic, mime in _MAGIC:
         if head.startswith(magic):
@@ -1138,9 +859,6 @@ def _sniff_mime(blob: bytes, kind: str) -> str:
 
 
 def _enum_name(message, field: str) -> str:
-    """Protobuf enums are ints on the attribute even though MessageToDict renders
-    them as names. Calling .upper() on one raised on every receipt, which is why
-    the RETRY handler had never run."""
     value = getattr(message, field, None)
     if isinstance(value, str):
         return value.upper()

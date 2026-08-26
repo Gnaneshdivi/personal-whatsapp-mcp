@@ -1,14 +1,3 @@
-"""Postgres backend.
-
-Raw asyncpg, matching the SQLite adapter's shape so the two read alike. The one
-real divergence is search: Postgres can index an expression in place, so there
-is no separate index table and no triggers to keep it honest — the GIN index is
-computed from `text` and cannot drift from it.
-
-Chosen for people who already run Postgres, and for containerised deployments:
-whatsmeow speaks Postgres too, so the session store rides along and the
-container needs no volume at all.
-"""
 from __future__ import annotations
 
 import json
@@ -20,14 +9,6 @@ from .base import Chat, Message, Store, split_query, status_rank
 log = logging.getLogger(__name__)
 
 def _json_meta(meta: dict | None) -> str | None:
-    """Serialise media metadata without ever aborting the write.
-
-    A dict assembled from a protobuf can pick up a value json cannot encode —
-    bytes, most often. Losing the metadata for one attachment is a blemish;
-    raising here loses the message, and on the history path every message after
-    it in that conversation, which is how 6,354 messages arrived with zero
-    attachments among them. Anything unencodable is stringified instead.
-    """
     if not meta:
         return None
     try:
@@ -86,7 +67,6 @@ _COLS = ("message_id, chat_jid, sender_jid, sender_name, is_from_me, ts, type, t
 
 class PostgresStore(Store):
     def __init__(self, url: str):
-        # The port hands us SQLAlchemy's form; asyncpg wants the plain one.
         self.dsn = url.replace("postgresql+asyncpg://", "postgresql://", 1)
         self._pool = None
 
@@ -108,7 +88,6 @@ class PostgresStore(Store):
             raise RuntimeError("store used before connect()")
         return self._pool
 
-    # ---------------------------------------------------------------- writes
 
     async def upsert_message(self, m: Message) -> bool:
         async with self.pool.acquire() as c:
@@ -213,7 +192,6 @@ class PostgresStore(Store):
                 "ON CONFLICT (chat_jid) DO UPDATE SET unread_count = EXCLUDED.unread_count",
                 chat_jid, max(0, count))
 
-    # ----------------------------------------------------------------- reads
 
     async def list_chats(self, *, limit: int = 30, archived: bool = False,
                          query: str | None = None, kind: str = "all") -> list[Chat]:
@@ -251,7 +229,6 @@ class PostgresStore(Store):
         if to_ts is not None:
             args.append(to_ts); sql += f" AND ts <= ${len(args)}"
         args.append(limit)
-        # Same second-resolution tie as SQLite; id is insertion order.
         sql += f" ORDER BY ts DESC, id DESC LIMIT ${len(args)}"
         async with self.pool.acquire() as c:
             return [_msg(r) for r in await c.fetch(sql, *args)]
@@ -264,19 +241,6 @@ class PostgresStore(Store):
 
     async def search(self, query: str, *, chat_jid: str | None = None, limit: int = 25,
                      from_ts: int | None = None, to_ts: int | None = None) -> list[Message]:
-        """websearch_to_tsquery, so quoted phrases and -exclusion work the way a
-        person types them without us parsing the string.
-
-        It also never raises on malformed input, which is why there is no literal
-        fallback here — SQLite's FTS5 needs one, Postgres does not.
-
-        One behaviour worth knowing: the 'english' configuration removes stop
-        words, so a phrase like "meet at" collapses to the single term 'meet'
-        and will also match "meeting". SQLite's FTS5 keeps the phrase intact.
-        That is a genuine difference in search semantics rather than a bug, and
-        the port does not paper over it — stop-word removal and stemming are
-        what make the results good.
-        """
         include, exclude = split_query(query)
         query = " ".join(include) + "".join(f" -{e}" for e in exclude)
         args: list[Any] = [query, chat_jid]
@@ -316,7 +280,6 @@ class PostgresStore(Store):
                 v = await c.fetchval("SELECT COALESCE(SUM(unread_count),0) FROM wa_chats")
         return int(v or 0)
 
-    # -------------------------------------------------------------------- kv
 
     async def purge(self) -> dict[str, int]:
         counts = {}
@@ -359,11 +322,6 @@ def _msg(r) -> Message:
     )
 
 
-# The sidebar shows the same ticks as the thread, so the chat list carries the
-# newest message's status. Derived, not cached on the chat row: a receipt lands
-# long after the message did and a stored copy would drift. LATERAL rather than
-# two correlated subqueries so the newest row is read once; it seeks the same
-# (chat_jid, ts DESC) index the message list uses.
 _CHATS_SELECT = """
 SELECT wa_chats.*, last.is_from_me AS last_from_me, last.status AS last_status
 FROM wa_chats
@@ -386,7 +344,6 @@ def _chat(r) -> Chat:
 
 
 def _opt(r, key: str):
-    """Only the chat-list query selects these; get_chat passes a plain row."""
     try:
         return r[key]
     except KeyError:

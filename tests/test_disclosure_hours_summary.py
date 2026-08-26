@@ -1,4 +1,3 @@
-"""Disclosure, active hours, and summaries."""
 from __future__ import annotations
 
 import datetime as dt
@@ -10,7 +9,7 @@ import pytest
 from wa_mcp.trigger.engine import TriggerEngine
 from wa_mcp.trigger.settings import ActiveHours, TriggerSettings
 
-from test_trigger import enabled, inbound, mock_model, rt          # noqa: F401
+from test_trigger import enabled, inbound, mock_model, rt  # noqa: F401
 
 
 def with_disclosure(**over):
@@ -18,8 +17,6 @@ def with_disclosure(**over):
     s.disclosure.enabled = True
     return s
 
-
-# --------------------------------------------------------------- disclosure
 
 async def test_the_first_reply_is_preceded_by_saying_it_is_a_bot(rt):
     eng = TriggerEngine(rt)
@@ -34,7 +31,6 @@ async def test_the_first_reply_is_preceded_by_saying_it_is_a_bot(rt):
 
 
 async def test_it_is_said_once_per_chat_not_once_per_message(rt):
-    """Repeating it every message is what makes people stop reading it."""
     eng = TriggerEngine(rt)
     eng.settings = with_disclosure()
     eng._http = mock_model(reply="ok")
@@ -47,13 +43,12 @@ async def test_it_is_said_once_per_chat_not_once_per_message(rt):
 
 
 async def test_it_survives_a_restart(rt):
-    """Remembered in the store, or every restart re-announces to everyone."""
     eng = TriggerEngine(rt)
     eng.settings = with_disclosure()
     eng._http = mock_model(reply="ok")
     await eng.consider(inbound(message_id="m1"))
 
-    fresh = TriggerEngine(rt)              # as if the process had restarted
+    fresh = TriggerEngine(rt)
     fresh.settings = with_disclosure()
     fresh._http = mock_model(reply="ok")
     await fresh.consider(inbound(message_id="m2"))
@@ -82,8 +77,6 @@ async def test_it_names_you(rt):
     assert "Gnanesh" in rt.wa.sent[0][1]
 
 
-# -------------------------------------------------------------- the window
-
 @pytest.mark.parametrize("hour,open_", [(8, False), (9, True), (20, True),
                                         (21, False), (3, False)])
 def test_a_daytime_window(hour, open_):
@@ -94,7 +87,6 @@ def test_a_daytime_window(hour, open_):
 @pytest.mark.parametrize("hour,open_", [(21, False), (22, True), (2, True),
                                         (6, False)])
 def test_a_window_that_crosses_midnight(hour, open_):
-    """22:00-06:00 is a normal thing to want and must not read as empty."""
     h = ActiveHours(enabled=True, start="22:00", end="06:00")
     assert h.open_at(dt.datetime(2026, 1, 1, hour, 0)) is open_
 
@@ -104,7 +96,6 @@ def test_disabled_hours_never_block():
 
 
 def test_a_malformed_time_does_not_close_the_gate_forever():
-    """A typo in a text field must not silently stop every reply."""
     h = ActiveHours(enabled=True, start="not a time", end="also not")
     assert h.open_at(dt.datetime(2026, 1, 1, 12, 0)) is True
 
@@ -123,8 +114,6 @@ async def test_out_of_hours_stops_the_reply_but_not_the_watching(rt):
     assert d.notified, "watch rules must still fire when replies are held"
 
 
-# --------------------------------------------------------------- summaries
-
 async def test_nothing_happened_means_nothing_is_sent(rt):
     from wa_mcp.trigger import summary
 
@@ -136,7 +125,6 @@ async def test_nothing_happened_means_nothing_is_sent(rt):
 
 
 async def test_a_summary_names_the_important_things_first(rt):
-    """The list is the point: a digest that buries them has failed."""
     from wa_mcp.trigger import summary
 
     captured = {}
@@ -182,7 +170,6 @@ async def test_a_summary_names_the_important_things_first(rt):
 
 
 async def test_the_window_advances_even_on_a_quiet_run(rt):
-    """Or a silent hour makes the next digest cover two."""
     from wa_mcp.trigger import summary
 
     rt.trigger = TriggerEngine(rt)
@@ -208,7 +195,6 @@ def test_where_a_summary_goes():
 
 
 async def test_a_late_message_gets_the_out_of_hours_note_once_a_day(rt):
-    """Silence at midnight sets no expectation; repeating it all night annoys."""
     eng = TriggerEngine(rt)
     eng.settings = enabled()
     eng.settings.hours = ActiveHours(enabled=True, start="09:00", end="09:01",
@@ -235,12 +221,6 @@ async def test_no_note_configured_means_silence(rt):
 
 
 def test_the_model_is_told_not_to_mirror_how_it_is_addressed():
-    """It replied "Hi ganny bhai" to "Hi".
-
-    "ganny bhai" is that contact's nickname for the ACCOUNT OWNER, so the bot
-    greeted him with his own name for someone else. Not editable, because
-    getting this wrong is not a matter of taste.
-    """
     from wa_mcp.trigger.backends import Context, compose_instruction
 
     ctx = Context(message="Hi", chat_name="Akbar", chat_jid="1@s.whatsapp.net",
@@ -253,7 +233,6 @@ def test_the_model_is_told_not_to_mirror_how_it_is_addressed():
 
 
 def test_the_disclosure_names_the_owner_not_the_word_me():
-    """me_name was empty, so it said "on behalf of me" — meaning nothing."""
     from wa_mcp.trigger.backends import Context, render
     from wa_mcp.trigger.settings import Disclosure
 
@@ -266,7 +245,6 @@ def test_the_disclosure_names_the_owner_not_the_word_me():
 
 
 def test_the_summary_asks_for_attention_items_as_points():
-    """"Check this" is the thing that must never be buried in prose."""
     from wa_mcp.trigger.summary import PROMPT
 
     out = PROMPT.format(me_name="Gnanesh", important="", body="…")
@@ -279,15 +257,7 @@ def test_the_summary_asks_for_attention_items_as_points():
     assert "who, what they want, and the deadline" in out
 
 
-# ------------------------------------------------------- not understanding
-
 async def test_a_reply_it_cannot_give_sends_your_wording_not_its_own(rt):
-    """Asked "Scrum undatledha?" it apologised in broken transliterated Telugu.
-
-    Whatever it improvises alongside the marker is the least reliable thing it
-    produced — it has just told you it did not follow the question. The owner's
-    fallback is fixed, correct, and says the same thing every time.
-    """
     eng = TriggerEngine(rt)
     eng.settings = enabled(
         guardrails={"fallback_message": "Not sure on that one — passing it on."},
@@ -301,7 +271,6 @@ async def test_a_reply_it_cannot_give_sends_your_wording_not_its_own(rt):
 
 
 async def test_a_marker_only_reply_still_says_something(rt):
-    """Silence leaves them waiting on an answer that is not coming."""
     eng = TriggerEngine(rt)
     eng.settings = enabled(
         guardrails={"fallback_message": "Not sure — passing it on."},
@@ -328,15 +297,7 @@ def test_the_instruction_forbids_guessing_and_mirroring():
     assert "[[NOTIFY]]" in out
 
 
-# ------------------------------------------------------ groups are a podium
-
 async def test_group_chatter_is_not_treated_as_a_request(rt):
-    """A summary said "someone is asking you to check the CCTV footage".
-
-    Neighbours were talking among themselves. In a group almost nothing is for
-    you, and inventing a request out of the room is worse than reporting
-    nothing — you act on it.
-    """
     from wa_mcp.store.base import Message
     from wa_mcp.trigger.summary import addressed_to_me
 
@@ -347,7 +308,6 @@ async def test_group_chatter_is_not_treated_as_a_request(rt):
 
 
 async def test_a_shouty_broadcast_is_still_not_yours(rt):
-    """Keyword matching alone would have promoted this one."""
     from wa_mcp.store.base import Message
     from wa_mcp.trigger.summary import addressed_to_me
 
@@ -357,7 +317,6 @@ async def test_a_shouty_broadcast_is_still_not_yours(rt):
 
 
 async def test_being_mentioned_makes_it_yours(rt):
-    """WhatsApp writes a mention into the text as @<number>."""
     from wa_mcp.store.base import Message
     from wa_mcp.trigger.summary import addressed_to_me
 
@@ -380,7 +339,6 @@ async def test_a_reply_to_something_you_said_makes_it_yours(rt):
 
 
 async def test_a_reply_to_someone_else_is_not_yours(rt):
-    """Quoting is only a signal when what was quoted was yours."""
     from wa_mcp.store.base import Message
     from wa_mcp.trigger.summary import addressed_to_me
 
@@ -393,7 +351,6 @@ async def test_a_reply_to_someone_else_is_not_yours(rt):
 
 
 async def test_direct_chats_are_never_filtered(rt):
-    """Everything someone sends you privately is for you by definition."""
     import time as _t
 
     from wa_mcp.store.base import Message

@@ -1,14 +1,3 @@
-"""The reply pipeline: decide, compose, guard, send.
-
-Every gate returns a *reason*, and every decision is logged. The first support
-question anyone asks is "why didn't it reply?", and a system that cannot answer
-that is one people turn off.
-
-Order matters. The cheap, certain refusals run before anything that costs a
-network call — and the loop guard runs before the scope check, because a runaway
-bot conversation is the failure that cannot be allowed to depend on
-configuration being right.
-"""
 from __future__ import annotations
 
 import logging
@@ -53,11 +42,6 @@ class Inbound:
 
 
 def now_in(tz_name: str):
-    """Local time in `tz_name`, falling back to the host clock.
-
-    Explicit rather than the host's zone: this may well run on a server in a
-    different country from the phone, and "9pm" has to mean the owner's 9pm.
-    """
     from datetime import datetime
 
     try:
@@ -75,12 +59,9 @@ class TriggerEngine:
         self.settings = TriggerSettings()
         self._cooldown: dict[str, float] = {}
         self._recent_hour: deque[float] = deque()
-        # Message ids this engine caused. Without it, a webhook that echoes text
-        # puts two bots in a conversation that never ends.
         self._generated: set[str] = set()
         self.log: deque[dict] = deque(maxlen=100)
 
-    # ------------------------------------------------------------- settings
 
     async def load(self) -> TriggerSettings:
         from .settings import SETTINGS_KEY
@@ -97,12 +78,10 @@ class TriggerEngine:
         if len(self._generated) > 2000:
             self._generated = set(list(self._generated)[-1000:])
 
-    # --------------------------------------------------------------- gates
 
     def _why_not(self, msg: Inbound) -> str | None:
         s = self.settings
 
-        # Cheapest and most certain first.
         if msg.is_from_me:
             return "message is our own"
         if msg.message_id in self._generated:
@@ -116,13 +95,9 @@ class TriggerEngine:
         if not ok:
             return why
 
-        # History sync replays OLD messages through the live path. Replying
-        # during it means answering weeks of conversations at once, to everyone.
         if self.rt.wa is None or not self.rt.wa.sync.state.ready:
             return "still syncing — replies are held until history finishes"
 
-        # Gates replying, not receiving: the message is stored and the watch
-        # rules still run, so nothing is lost by being out of hours.
         if not s.hours.open_at(now_in(s.hours.timezone)):
             return f"outside active hours ({s.hours.start}–{s.hours.end})"
 
@@ -156,12 +131,8 @@ class TriggerEngine:
 
         return None
 
-    # ------------------------------------------------------------ pipeline
 
     async def consider(self, msg: Inbound) -> Decision:
-        # Watch rules run FIRST and independently of replying: "tell me when
-        # someone says urgent" has to work with auto-reply switched off, which
-        # is how a lot of people will use this.
         watched = await self._watch(msg)
 
         why = self._why_not(msg)
@@ -185,8 +156,6 @@ class TriggerEngine:
                 text = await reply_via_model(self.settings.model, ctx, self._http,
                                              self.settings.notify.handoff_marker)
             else:
-                # Minted per delivery, not per account: whatever the agent on
-                # the other end is talked into, it can only reply here.
                 token = ""
                 if not self.settings.webhook.expect_reply:
                     from ..delivery import mint
@@ -207,24 +176,14 @@ class TriggerEngine:
 
         text = (text or "").strip()
 
-        # Fire-and-forget: the POST succeeded and the endpoint owns the reply
-        # from here. Not a failure, and not something to log as one.
         if backend == "webhook" and not self.settings.webhook.expect_reply:
             return self._record(Decision(False, "handed to the webhook",
                                          backend=backend))
 
-        # A handoff marker means the model decided a human is needed. Strip it
-        # before anything reaches the contact — they should never see the
-        # plumbing — and route the alert to whoever actually reads it.
         marker = self.settings.notify.handoff_marker
         handoff = bool(marker and marker in text)
         if handoff:
             text = text.replace(marker, "").strip()
-            # The marker means it did not understand or cannot answer. Whatever
-            # it improvised alongside is the least reliable thing it produced —
-            # asked "Scrum undatledha?" it apologised in broken transliterated
-            # Telugu. Send the owner's own wording instead, which is fixed,
-            # correct, and says the same thing every time.
             fallback = (self.settings.guardrails.fallback_message or "").strip()
             if fallback:
                 text = fallback
@@ -234,9 +193,6 @@ class TriggerEngine:
             text, media = extract_media(text)
 
         if not text and not media:
-            # It said only the marker: it did not understand and knows it. The
-            # fallback is the right thing to send — silence leaves them waiting
-            # on an answer that is not coming.
             if handoff:
                 g = self.settings.guardrails
                 if g.fallback_message:
@@ -252,16 +208,10 @@ class TriggerEngine:
         if len(text) > limit:
             text = text[:limit].rsplit(" ", 1)[0] + "…"
 
-        # Claim the slots BEFORE sending. A send that fails should still burn the
-        # cooldown, or a failing backend retries against the same chat as fast as
-        # messages arrive.
         chat = J.normalise(msg.chat_jid)
         self._cooldown[chat] = time.monotonic()
         self._recent_hour.append(time.monotonic())
 
-        # Told once, ahead of the first automated reply in this conversation.
-        # Its own message rather than a prefix: welded onto an answer it reads
-        # as boilerplate and gets skimmed, and this is the part that must not.
         await self._disclose(msg, ctx)
 
         sent_media = 0
@@ -292,12 +242,9 @@ class TriggerEngine:
                                      notified=notified or watched))
 
     async def _watch(self, msg: Inbound) -> str | None:
-        """Alert a human because of who sent it or what it said."""
         n = self.settings.notify
         if not n.watching or msg.is_from_me or msg.message_id in self._generated:
             return None
-        # Held during sync for the same reason replies are: history replay would
-        # fire an alert for every old message matching the word.
         if self.rt.wa is None or not self.rt.wa.sync.state.ready:
             return None
         reason = n.watch_reason(msg.text, msg.sender_jid, msg.chat_jid, msg.is_group)
@@ -309,14 +256,8 @@ class TriggerEngine:
         d.notified = d.notified or notified
         return d
 
-    # ------------------------------------------------------------ outputs
 
     async def _send_media(self, chat: str, urls: list[str]) -> int:
-        """Fetch each attachment and send it as the right kind.
-
-        One failure does not sink the rest, and never the text that already
-        went out — a broken URL should cost an attachment, not the reply.
-        """
         import base64
 
         n = 0
@@ -342,11 +283,8 @@ class TriggerEngine:
             log.warning("fallback message not sent: %s", exc)
 
     async def _refuse(self, msg: Inbound, reason: str) -> Decision:
-        """A guardrail said no. Optionally tell them, optionally tell a human."""
         g = self.settings.guardrails
         chat = J.normalise(msg.chat_jid)
-        # Refusals honour the cooldown too. Without it, someone repeating a
-        # blocked word gets the same canned line over and over.
         now = time.monotonic()
         last = self._cooldown.get(chat)
         if last is None or now - last >= g_cooldown(self.settings):
@@ -359,12 +297,6 @@ class TriggerEngine:
         return self._record(Decision(False, reason, notified=notified))
 
     async def _after_hours(self, msg: Inbound) -> bool:
-        """One line so a late message is not met with silence.
-
-        Once per chat per day: a standing "we are closed" on every message all
-        night is worse than saying nothing, and the point is to set an
-        expectation, not to keep restating it.
-        """
         text = (self.settings.hours.after_hours_message or "").strip()
         if not text:
             return False
@@ -384,14 +316,11 @@ class TriggerEngine:
             return False
 
     async def _disclose(self, msg: Inbound, ctx) -> bool:
-        """Send the "you are talking to a bot" line, once per chat."""
         d = self.settings.disclosure
         if not d.enabled or not (d.message or "").strip():
             return False
         chat = J.normalise(msg.chat_jid)
         key = f"disclosed.{chat}"
-        # Remembered in the store, so a restart does not start the whole thing
-        # over and announce itself again to everyone.
         if await self.rt.store.get_kv(key):
             return False
         try:
@@ -401,29 +330,12 @@ class TriggerEngine:
             await self.rt.store.put_kv(key, {"at": time.time()})
             return True
         except Exception as exc:
-            # A failed disclosure must not cost the reply, but it must not be
-            # recorded as done either — better to say it twice than never.
             log.warning("disclosure to %s failed: %s", chat, exc)
             return False
 
     async def _notify(self, msg: Inbound, reason: str) -> str | None:
-        """Tell a human, wherever `route` says to.
-
-        The destination used to be inferred from whether a number was filled
-        in, which could not express the three real cases. Blank first meant
-        "the chat it came from" — which delivers "Needs you: … Reason: …" to
-        the person the alert is *about* — and then meant "off", which silently
-        stopped alerts someone had set up on purpose. Now it is stated:
-
-            off     nothing is sent
-            me      your own self-chat, for a personal number
-            chat    back into the conversation, which the other side will read
-            number  a separate phone, for a business line
-        """
         n = self.settings.notify
         if n.route == "me":
-            # The self-chat -- "Message yourself" in WhatsApp. Right for a
-            # personal number, where there is no second phone to alert.
             target = J.normalise(getattr(self.rt.wa, "self_jid", "") or "")
         elif n.route == "chat":
             target = J.normalise(msg.chat_jid)
@@ -475,8 +387,6 @@ class TriggerEngine:
             timestamp=str(int(time.time())),
             history=history[-n:],
         )
-        # Rendered once, here, so the model and the webhook cannot be sent
-        # different instructions for the same account.
         ctx.system = render(s.model.system_prompt, ctx)
         return ctx
 
@@ -484,9 +394,6 @@ class TriggerEngine:
         entry = {"at": time.time(), **d.public()}
         self.log.appendleft(entry)
         if d.error:
-            # Something is misconfigured or broken, which is not the same as a
-            # message that was simply out of scope. Logging both at debug meant
-            # a dead backend looked exactly like normal quiet operation.
             log.warning("auto-reply FAILED: %s", d.reason)
         elif d.fired:
             log.info("auto-reply sent via %s", d.backend)

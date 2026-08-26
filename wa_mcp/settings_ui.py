@@ -1,25 +1,3 @@
-"""The settings page.
-
-Split out of web.py, which had it as a 200-line inline f-string. The old page
-had three problems worth naming, because they shaped this one:
-
-  * **Save silently did nothing.** Its collector pre-declared `{model, webhook,
-    reply}` and then wrote `o[parent][child]` for every dotted field name, so
-    the first `guardrails.*` field threw on `undefined` and the submit handler
-    died before it ever called fetch. No request, no error, no clue. The
-    collector here walks the path and creates parents as it goes, so a field
-    added to the form needs no matching change in the JS.
-  * **Everything was visible at once**, including a webhook section that does
-    nothing while the backend is set to model, and allowlists that do nothing
-    while the scope is "all".
-  * **yes/no dropdowns** for what are plainly switches, and no explanation of
-    what any of it did -- several of these settings are the difference between
-    a useful assistant and one that invents prices.
-
-Rendering is server-side because the values come from a dataclass that already
-knows its own defaults; shipping them as JSON and rebuilding the form in the
-browser would duplicate that knowledge in a second place.
-"""
 from __future__ import annotations
 
 import html
@@ -30,11 +8,6 @@ def esc(s) -> str:
     return html.escape(str(s if s is not None else ""))
 
 
-# --------------------------------------------------------------- the tokens
-
-# Every {{token}} Context.tokens() can substitute. Listed here so the page and
-# the engine cannot drift: if one is added there and not here it simply is not
-# documented, which is better than documenting one that does not exist.
 TOKENS = [
     ("{{message}}", "The message that arrived, as text."),
     ("{{prompt}}", "The fully rendered prompt, history included. Webhook only."),
@@ -57,10 +30,7 @@ TOKENS = [
 TOKEN_HELP = "Available tags:\n\n" + "\n".join(f"{t} — {d}" for t, d in TOKENS)
 
 
-# ------------------------------------------------------------- form pieces
-
 def info(tip: str) -> str:
-    """A hover/focus explanation. tabindex so it is reachable without a mouse."""
     return f'<span class="i" tabindex="0" data-tip="{esc(tip)}">i</span>'
 
 
@@ -90,11 +60,6 @@ def text_in(name: str, value: str, placeholder: str = "", kind: str = "text",
 
 
 def num_in(name: str, value, step: str = "1") -> str:
-    """step="1" collects as an integer; anything else as a float.
-
-    Marked on the element rather than inferred in JS, because parseInt on a
-    temperature of 0.7 quietly stores 0 and makes the model deterministic.
-    """
     kind = "int" if step == "1" else "float"
     v = int(value) if kind == "int" else value
     return (f'<input class="ctl" type="number" step="{step}" data-num="{kind}" '
@@ -121,11 +86,6 @@ def select(name: str, current: str, options) -> str:
 
 
 def picker(name: str, jids, kind: str) -> str:
-    """A chip list plus a button that opens the searchable chooser.
-
-    The value lives in a hidden input so the collector treats it like any other
-    field. `kind` decides whether the chooser lists people or groups.
-    """
     return (f'<div class="pick" data-kind="{kind}">'
             f'<input type="hidden" data-list="jids" name="{esc(name)}" '
             f'value="{esc(",".join(jids))}">'
@@ -138,8 +98,6 @@ def section(title: str, body: str, when: str = "", note: str = "") -> str:
     n = f'<p class="note">{esc(note)}</p>' if note else ""
     return f'<section class="card"{w}><h2>{esc(title)}</h2>{n}{body}</section>'
 
-
-# ---------------------------------------------------------------------- css
 
 CSS = """
 *{box-sizing:border-box}
@@ -235,17 +193,13 @@ button.danger{border-color:#f15c6d;color:#f15c6d}
 """
 
 
-# --------------------------------------------------------------- the page
-
 def build(rt, q: str, status: dict) -> str:
-    """Render the whole settings document."""
     t = rt.trigger.settings
     ar = status["auto_reply"]
 
     state = ('<span class="pill on">active</span>' if ar["active"]
              else f'<span class="pill">idle — {esc(ar["reason"] or "off")}</span>')
 
-    # --- backend ---------------------------------------------------------
     backend = section("Auto-reply", (
         row("Reply automatically", toggle("enabled", t.enabled),
             "Master switch. Off, nothing is ever sent on your behalf — but the "
@@ -261,7 +215,6 @@ def build(rt, q: str, status: dict) -> str:
     ), note="Replies go from your real number. Bulk or unsolicited messages can "
             "get it banned.")
 
-    # --- model -----------------------------------------------------------
     presets = ("https://openrouter.ai/api/v1", "https://api.openai.com/v1",
                "https://api.groq.com/openai/v1", "https://api.together.xyz/v1",
                "http://localhost:11434/v1", "http://localhost:1234/v1")
@@ -305,7 +258,6 @@ def build(rt, q: str, status: dict) -> str:
               "live conversation — a late answer reads worse than none.")
     ), when="enabled&backend=model")
 
-    # --- webhook ---------------------------------------------------------
     hdrs = "\n".join(f"{k}: {v}" for k, v in (t.webhook.headers or {}).items())
     webhook = section("Webhook", (
         row("URL", text_in("webhook.url", t.webhook.url, "https://your.app/hook"),
@@ -354,7 +306,6 @@ def build(rt, q: str, status: dict) -> str:
               "abandoned.")
     ), when="enabled&backend=webhook")
 
-    # --- guardrails ------------------------------------------------------
     g = t.guardrails
     guards = section("Guardrails", (
         row("Answer only from this conversation", toggle("guardrails.context_only",
@@ -387,7 +338,6 @@ def build(rt, q: str, status: dict) -> str:
               "Added to the prompt verbatim.", wide=True)
     ), when="enabled")
 
-    # --- default message -------------------------------------------------
     fallback = section("Default message", (
         row("What to send", text_in("guardrails.fallback_message",
                                     g.fallback_message),
@@ -404,7 +354,6 @@ def build(rt, q: str, status: dict) -> str:
               "than apologising for something they did not see break.")
     ), when="enabled")
 
-    # --- scope -----------------------------------------------------------
     r = t.reply
     scope = section("Who gets replies", (
         row("Direct messages", select("reply.personal", r.personal,
@@ -445,7 +394,6 @@ def build(rt, q: str, status: dict) -> str:
               "Sends a typing indicator before the reply.")
     ), when="enabled")
 
-    # --- media -----------------------------------------------------------
     media = section("Media", (
         row("Send files the model links", toggle("send_media", t.send_media),
             "When a reply contains a link to a picture, video, voice note or "
@@ -457,7 +405,6 @@ def build(rt, q: str, status: dict) -> str:
               "trusted to be small.")
     ), when="enabled")
 
-    # --- disclosure ------------------------------------------------------
     d = t.disclosure
     disclosure = section("Say it is a bot", (
         row("Introduce itself", toggle("disclosure.enabled", d.enabled),
@@ -471,7 +418,6 @@ def build(rt, q: str, status: dict) -> str:
               wide=True, when="disclosure.enabled")
     ), when="enabled")
 
-    # --- hours -----------------------------------------------------------
     h = t.hours
     hours = section("When it may reply", (
         row("Only reply between set hours", toggle("hours.enabled", h.enabled),
@@ -495,7 +441,6 @@ def build(rt, q: str, status: dict) -> str:
               when="hours.enabled")
     ), when="enabled")
 
-    # --- summary ---------------------------------------------------------
     sm = t.summary
     summary = section("Summaries", (
         row("Send me summaries", toggle("summary.enabled", sm.enabled),
@@ -530,7 +475,6 @@ def build(rt, q: str, status: dict) -> str:
               "read.", when="summary.enabled")
     ))
 
-    # --- notify ----------------------------------------------------------
     n = t.notify
     notify = section("Tell me when", (
         row("Send alerts to", select("notify.route", n.route,
@@ -573,9 +517,6 @@ def build(rt, q: str, status: dict) -> str:
             "which is the useful case: watch a number without answering on it. "
             "The alerts about replies appear only once auto-reply is on.")
 
-    # The connector URL, where someone can actually reach it. It used to
-    # exist only in a line of the startup log, which is no help to anyone who
-    # closed that terminal or runs this as a service.
     connect = section("Connect an AI client", (
         row("MCP endpoint",
             '<input class="ctl" id="mcpurl" readonly value="loading…">',
@@ -588,8 +529,6 @@ def build(rt, q: str, status: dict) -> str:
               "", wide=True)
     ))
 
-    # One control that does the whole thing. Anything less left something
-    # behind that the person clicking it believed was gone.
     session = section("Log out", (
         row("Log out",
             '<button type="button" class="ghost sm" id="signout">Log out</button>',
@@ -622,8 +561,6 @@ def build(rt, q: str, status: dict) -> str:
             f"<style>{CSS}</style>{body}"
             f"<script>const Q={json.dumps(q)};{JS}</script>")
 
-
-# ----------------------------------------------------------------- script
 
 JS = r"""
 const $ = s => document.querySelector(s);

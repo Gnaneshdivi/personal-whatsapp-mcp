@@ -1,16 +1,3 @@
-"""The settings page and its save path.
-
-The page this replaced had a collector that pre-declared `{model, webhook,
-reply}` and then wrote `o[parent][child]` for every dotted field name. The
-first `guardrails.*` field therefore threw on `undefined`, the submit handler
-died before calling fetch, and Save appeared to do nothing at all -- no
-request, no error message, nothing in the log. It stayed that way because
-every test posted JSON straight at the API, which worked fine.
-
-So these test the two halves that were never connected: that the form actually
-contains a control for everything the settings object persists, and that a
-payload shaped like the one the form produces survives the round trip.
-"""
 from __future__ import annotations
 
 import dataclasses
@@ -40,14 +27,10 @@ async def client(tmp_path, monkeypatch):
 
 K = "?k=t0ken"
 
-# Persisted but deliberately not on the form: derived, or set by pairing.
-# The instruction is shared, so it is edited once under Model and the
-# webhook receives the same text; there is no second field for it.
 NOT_ON_FORM: set[str] = set()
 
 
 def _leaf_names(obj, prefix="") -> set[str]:
-    """Every dotted field name the settings object persists."""
     out = set()
     for f in dataclasses.fields(obj):
         v = getattr(obj, f.name)
@@ -60,11 +43,6 @@ def _leaf_names(obj, prefix="") -> set[str]:
 
 
 async def test_the_form_has_a_control_for_every_persisted_field(client):
-    """A field added to the dataclass with no control is invisible and unsettable.
-
-    Worse, it silently reverts to its default on every save, because the form
-    posts a complete object and anything absent is defaulted.
-    """
     from wa_mcp.trigger.settings import TriggerSettings
 
     page = (await client.get(f"/settings{K}")).text
@@ -109,7 +87,6 @@ FULL = {
 
 
 async def test_a_full_payload_round_trips(client):
-    """Every field, including the guardrails and notify ones Save used to drop."""
     r = await client.post(f"/api/settings{K}", json=FULL)
     assert r.status_code == 200 and r.json()["ok"] is True
 
@@ -121,7 +98,6 @@ async def test_a_full_payload_round_trips(client):
 
 
 async def test_guardrails_and_notify_are_persisted_not_defaulted(client):
-    """The exact regression: these two branches silently never saved."""
     await client.post(f"/api/settings{K}", json=FULL)
 
     from wa_mcp.app import RT
@@ -135,7 +111,6 @@ async def test_guardrails_and_notify_are_persisted_not_defaulted(client):
 
 
 async def test_the_masked_key_does_not_replace_the_real_one(client):
-    """The form renders *** rather than the key, and posts it back unchanged."""
     await client.post(f"/api/settings{K}", json=FULL)
     masked = json.loads(json.dumps(FULL))
     masked["model"]["api_key"] = "***"
@@ -151,15 +126,12 @@ async def test_the_key_is_never_rendered_into_the_page(client):
 
 
 async def test_documented_tags_match_what_the_engine_substitutes():
-    """The page lists {{tokens}}; drift makes the documentation a lie."""
     from wa_mcp.settings_ui import TOKENS
     from wa_mcp.trigger.backends import Context
 
     ctx = Context(message="", chat_name="", chat_jid="", sender_name="",
                   sender_jid="", me_name="", message_id="", timestamp="",
                   history=[])
-    # prompt and reply_token are passed as extras on the webhook path
-    # rather than living on Context, so they are not in tokens().
     real = set(ctx.tokens()) | {"prompt", "reply_token"}
     documented = {t.strip("{}") for t, _ in TOKENS}
     assert documented <= real, f"documented but not substituted: {documented - real}"
@@ -167,12 +139,6 @@ async def test_documented_tags_match_what_the_engine_substitutes():
 
 
 async def test_saving_during_a_sync_says_why_it_is_not_replying(client):
-    """"Not firing: —" told nobody anything.
-
-    Two separate things hold a reply back: settings that are not usable, and
-    the sync gate. Only the first carried a reason, so a valid config saved
-    while history was still arriving reported a blank one.
-    """
 
     live = dict(FULL, enabled=True, backend="model")
     live["model"] = dict(FULL["model"], api_key="sk-live")
@@ -181,7 +147,6 @@ async def test_saving_during_a_sync_says_why_it_is_not_replying(client):
     r = await client.post(f"/api/settings{K}", json=live)
     d = r.json()
     assert d["ok"] is True
-    # Unpaired in tests, so the gate is shut and it must say so.
     assert d["would_fire"] is False
     assert d["blocked_by"], "not firing with no reason given"
     assert "syncing" in d["blocked_by"] or "off" in d["blocked_by"]
@@ -216,8 +181,8 @@ async def test_settings_can_be_changed_from_mcp_a_fragment_at_a_time(client):
     assert out["result"]["structuredContent"]["ok"] is True
 
     s = RT.trigger.settings
-    assert s.enabled is False              # what was asked for
-    assert s.model.model == "m1"           # and nothing else
+    assert s.enabled is False
+    assert s.model.model == "m1"
     assert s.model.api_key == "sk-live"
     assert s.reply.personal == "allowlist"
     assert s.reply.cooldown_seconds == 45

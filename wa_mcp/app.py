@@ -1,9 +1,3 @@
-"""The ASGI app: MCP tools, the web UI, and the auth wrapper around both.
-
-One process serves everything. The MCP endpoint and the browser UI share a
-runtime, so a message that arrives while a model is mid-conversation is already
-in the store by the time the next tool call runs.
-"""
 from __future__ import annotations
 
 import logging
@@ -32,7 +26,7 @@ def rt() -> Runtime:
 
 
 class ToolError(Exception):
-    """Surfaced to the model as text it can act on."""
+    pass
 
 
 mcp = FastMCP(
@@ -68,7 +62,6 @@ def _fail(exc: Exception) -> dict[str, Any]:
 
 
 def _ts(value: str | None) -> int | None:
-    """Accept ISO-8601 from a model, or nothing."""
     if not value:
         return None
     try:
@@ -79,31 +72,17 @@ def _ts(value: str | None) -> int | None:
 
 
 async def _resolve_chat(value: str) -> str:
-    """Accept a JID, a phone number, or a contact name.
-
-    Name resolution is the difference between "send a message to mom" working
-    and the model inventing a JID. On several matches the error names them, so
-    the model can ask rather than guess.
-    """
     value = (value or "").strip()
     if not value:
         raise ToolError("no chat given")
-    # Phone numbers get written with spaces, dashes and brackets — by people
-    # and by models copying them out of a contact card. Testing isdigit() on
-    # the raw string sent "+91 98123 45678" down the name-search path, where
-    # it matched nothing and failed as an unknown contact.
     if "@" in value:
-        return J.to_jid(value)          # a JID: dots are part of the domain
+        return J.to_jid(value)
     compact = re.sub(r"[\s\-().]", "", value)
     if compact.lstrip("+").isdigit() and len(compact.lstrip("+")) >= 7:
         return J.to_jid(compact)
 
     from .search import find_chats
 
-    # Both sources, merged. Looking at chats first and stopping there hid the
-    # address book whenever any conversation happened to match: "akbar" landed
-    # on "Asif Akbar Brother" without ever mentioning that "Akbar Ktr Srm" and
-    # "Akbar Baig" also exist. Ambiguity across the two is still ambiguity.
     candidates: dict[str, tuple[str, str]] = {}
     for c, name in await find_chats(rt(), query=value, limit=50):
         candidates[J.normalise(c.chat_jid)] = (c.chat_jid, name)
@@ -114,14 +93,12 @@ async def _resolve_chat(value: str) -> str:
         raise ToolError(f"no chat or contact matching {value!r}. "
                         f"Use wa_search to look, or pass a phone number.")
 
-    # An exact name wins outright: 18 names here are contained in some other
-    # name, so "Dad" competed with "Dad's office" and could not be sent to.
     hits = list(candidates.values())
     exact = [h for h in hits if (h[1] or "").strip().lower() == value.lower()]
     if len(exact) == 1:
         return exact[0][0]
     if exact:
-        hits = exact                    # narrow to the real tie before listing
+        hits = exact
 
     if len(hits) == 1:
         return hits[0][0]
@@ -144,8 +121,6 @@ def _msg_out(m) -> dict:
             "sender_name": rt().contacts.display_name(
                 m.sender_jid or "", push_name=m.sender_name) if m.sender_jid else None}
 
-
-# ========================================================== connection
 
 @mcp.tool
 async def wa_status() -> dict[str, Any]:
@@ -215,8 +190,6 @@ async def wa_logout(keep_history: bool = False) -> dict[str, Any]:
         return _fail(exc)
 
 
-# ================================================================ read
-
 @mcp.tool
 async def wa_list_chats(limit: int = 30, archived: bool = False,
                         query: str = "") -> dict[str, Any]:
@@ -240,7 +213,7 @@ async def wa_get_messages(chat: str, limit: int = 30, before_id: str = "",
 
     `chat` may be a JID, a phone number or a contact name.
     `before_id` pages backwards. `since`/`until` are ISO-8601 timestamps.
-    
+
     Accepts a name and searches conversations and the address book. Several matches are listed rather than guessed — ask which is meant.
     """
     try:
@@ -293,8 +266,6 @@ async def wa_unread(chat: str = "") -> dict[str, Any]:
         return _fail(exc)
 
 
-# =============================================================== write
-
 @mcp.tool
 async def wa_send(to: str, text: str, reply_to: str = "",
                   reply_token: str = "") -> dict[str, Any]:
@@ -331,7 +302,7 @@ async def wa_send_media(to: str, media_base64: str, kind: str = "image",
 
     `media_base64` is the raw file bytes, base64-encoded.
     `kind` is one of: image, video, audio, document, sticker.
-    
+
     Same resolution rules as wa_send: search by name, and ask when more than one matches.
     """
     try:
@@ -370,9 +341,9 @@ async def wa_typing(chat: str, typing: bool = True,
 
     Worth doing before a slow reply — it is what makes an automated response
     read as a person rather than a bot posting instantly.
-    
+
     Same resolution rules as wa_send.
-    
+
     Resolves `to` the same way as wa_send: by name across chats and the
     address book, refusing and listing when several match — ask which.
     """
@@ -418,30 +389,13 @@ async def wa_check_number(phone: str) -> dict[str, Any]:
 TOKEN_KEY = "auth.generated_token"
 
 
-# ============================================================== plumbing
-
 class Auth:
-    """One bearer token, presented as a header or as ?k=.
-
-    That is the whole scheme. It replaced an OAuth 2.1 server — dynamic client
-    registration, PKCE, rotating refresh tokens — which worked, and which was a
-    great deal of machinery to get a credential into a connector dialog that
-    accepts a URL and nothing else.
-
-    The discovery paths answer 404 rather than 401. A 401 carrying
-    `WWW-Authenticate: Bearer` tells an MCP client that OAuth exists, so it
-    walks /.well-known/*, tries to register, fails, and reports "couldn't
-    register with the sign-in service" — never trying the token that was in the
-    URL all along. 404 ends that search immediately.
-    """
 
     SKIP = ("/.well-known/", "/register", "/authorize", "/token", "/revoke")
 
     def __init__(self, app, token: str, rt=None, token_hint: str = ""):
         self.app, self.token = app, token
         self.rt = rt
-        # Telling someone to paste a token without saying where it is leaves
-        # them looking at a password box for a password nobody gave them.
         self.token_hint = token_hint or "Paste the access token."
 
     async def __call__(self, scope, receive, send):
@@ -457,9 +411,6 @@ class Auth:
         presented = headers.get("authorization", "")
         from_url = False
         if not presented:
-            # Also accept ?k=<token>: the custom-connector dialog in most MCP
-            # clients takes a URL and nothing else, so a header-only scheme
-            # cannot be configured there at all.
             for part in scope.get("query_string", b"").decode().split("&"):
                 if part.startswith("k="):
                     from urllib.parse import unquote
@@ -474,33 +425,8 @@ class Auth:
                     break
 
         if not secrets.compare_digest(presented, f"Bearer {self.token}"):
-            # A delivery token is a real credential too, just a narrow one.
-            # Without this branch the hand-off flow cannot authenticate at all
-            # at all, and the agent gets 401 rather than the scoped access it
-            # was issued. Scope decides what it may then reach.
             if not await self._is_delivery(presented):
-                # A browser asking for a page gets somewhere to sign in. A bare
-                # 401 is correct and useless: it looks broken, and the person
-                # seeing it has no idea the answer is a token they were given
-                # once at install.
-                # Nothing paired yet means nothing to protect: no account,
-                # no messages, no settings. The QR is the front door, and
-                # whoever completes the scan gets the session — so setting it
-                # up is one step rather than "find the token, then scan".
-                #
-                # Someone else could reach an unpaired instance first, if they
-                # had the URL. They would be linking their own WhatsApp to your
-                # server, not reading anything of yours, and the fix is to log
-                # out and pair again.
                 if self._is_browser(scope, headers) and await self._unpaired():
-                    # And hand out a pairing ticket, so this browser can come
-                    # back once the scan lands. Without it the flow breaks at
-                    # the moment it succeeds: pairing completes, the page
-                    # reloads, the server is now paired, and the person who
-                    # just linked their phone is asked for a token.
-                    #
-                    # A ticket is not a session. It reaches /connect and
-                    # nothing else, and only becomes one by completing a scan.
                     return await self.app(scope, receive,
                                           _with_ticket(send, self.rt, headers))
                 if (self._is_browser(scope, headers)
@@ -513,25 +439,11 @@ class Auth:
                 return await _plain(send, 401, b'{"error":"unauthorized"}')
         elif (from_url and self._is_browser(scope, headers)
               and scope.get("path") != "/logout"):
-            # Not for /logout: issuing a session cookie on the way into the
-            # one endpoint whose job is to revoke it would set and clear it in
-            # the same click, and the redirect swallows the page that says
-            # what was deleted.
-            # Trade the token in the URL for a cookie, then send the browser to
-            # the bare address. A URL nobody can remember gets pasted into a
-            # notes app, and every visit leaves the credential in history, in
-            # proxy logs and in the referrer of anything the page loads. One
-            # redirect and the address is just https://host/ from then on.
             return await _set_session(send, presented[7:], scope)
         await self.app(scope, receive, send)
 
     @staticmethod
     def _is_browser(scope, headers: dict) -> bool:
-        """A page load, not an API call.
-
-        Only GETs that asked for HTML: redirecting an MCP client or a curl
-        would break it, and neither of them keeps cookies anyway.
-        """
         return (scope.get("method") == "GET"
                 and "text/html" in headers.get("accept", ""))
 
@@ -544,7 +456,6 @@ class Auth:
         return ""
 
     async def _unpaired(self) -> bool:
-        """No WhatsApp account linked, so there is nothing behind the door."""
         try:
             return not (self.rt and self.rt.wa and self.rt.wa.self_jid)
         except Exception:
@@ -559,16 +470,11 @@ class Auth:
 
 
 def _with_ticket(send, rt, headers: dict):
-    """Wrap `send` so the pairing page also sets a ticket cookie.
-
-    Minted once and kept on the runtime: one server pairs one number, so there
-    is exactly one pairing in flight and no reason for a table.
-    """
     import secrets as _secrets
 
     existing = Auth._ticket(headers)
     if rt is not None and existing and existing == getattr(rt, "pair_ticket", None):
-        return send                       # already carrying a valid one
+        return send
     ticket = _secrets.token_urlsafe(18)
     if rt is not None:
         rt.pair_ticket = ticket
@@ -586,17 +492,6 @@ def _with_ticket(send, rt, headers: dict):
 
 
 async def _sign_in_page(send, scope, token_hint: str = "") -> None:
-    """401 with a form, rather than 401 with nothing.
-
-    The form posts the token back as ?k=, which the middleware above trades for
-    a cookie — so this reuses the path that already works instead of adding a
-    second way to authenticate.
-
-    Deliberately does NOT offer the pairing QR. That QR links a phone to this
-    server, so showing it to an unauthenticated visitor would let anyone who
-    knows the hostname claim an unpaired instance — including in the moments
-    after a log out.
-    """
     path = scope.get("path", "/")
     body = (
         '<!doctype html><meta charset="utf-8"><title>Sign in</title>'
@@ -629,17 +524,11 @@ async def _sign_in_page(send, scope, token_hint: str = "") -> None:
 
 
 async def _set_session(send, token: str, scope) -> None:
-    """Set the session cookie and redirect to the same path without ?k=."""
     from urllib.parse import urlencode, parse_qsl
 
     rest = [(k, v) for k, v in parse_qsl(scope.get("query_string", b"").decode())
             if k != "k"]
     target = scope.get("path", "/") + (f"?{urlencode(rest)}" if rest else "")
-    # HttpOnly so a script cannot read it; SameSite=Lax so it survives the
-    # redirect. Secure only when the request actually arrived over TLS —
-    # browsers drop a Secure cookie on plain http, and localhost is a normal
-    # way to run this. Behind a proxy the scheme is in x-forwarded-proto,
-    # since the hop to us is http even when the browser used https.
     headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
     https = (scope.get("scheme") == "https"
              or headers.get("x-forwarded-proto", "").split(",")[0].strip() == "https")
@@ -665,7 +554,7 @@ def create_app(settings: Settings, storage: Storage):
     app = mcp.http_app(
         transport="http",
         stateless_http=True,
-        host_origin_protection=False,   # the hostname behind a tunnel is random
+        host_origin_protection=False,
     )
 
     from .web import mount_web
@@ -701,10 +590,6 @@ def create_app(settings: Settings, storage: Storage):
 
     app.router.lifespan_context = lifespan
 
-    # Inside Auth, so the token has already been accepted as valid by the time
-    # this asks what it is allowed to do — authentication first, then what that
-    # identity may reach. Wrapped after the lifespan is set, since a plain ASGI
-    # callable has no .router for that assignment.
     from .delivery import Scope
 
     scoped = Scope(app, RT)
@@ -715,25 +600,12 @@ def create_app(settings: Settings, storage: Storage):
                     token_hint="Paste the token from WA_AUTH_TOKEN, the "
                                "variable this server was started with.")
 
-    # No token. On loopback that is right: only processes on this machine can
-    # reach it, and asking someone to manage a credential for their own laptop
-    # is friction with nothing on the other side of it.
-    #
-    # Reachable from elsewhere is a different thing. The whole point of this is
-    # to put it behind a tunnel so Claude can reach it, and that URL is on the
-    # public internet — ngrok subdomains get scanned. Open there means whoever
-    # finds it reads every message and can send as you, so one is created
-    # rather than left off. Nobody has to choose it.
     if _is_reachable_from_elsewhere(settings):
         if settings.allow_open:
             log.warning("WA_ALLOW_OPEN=1 — reachable from other machines with "
                         "NO authentication. Anyone who finds the URL can read "
                         "and send on this WhatsApp account.")
             return scoped
-        # Created in the store during startup, not here: the store is not open
-        # yet, and it is where everything else that has to survive a restart
-        # lives. Auth is built now with no token and given one before the first
-        # request is served — nothing is listening in between.
         auth = Auth(scoped, "", rt=RT,
                     token_hint="The token is shown in the log when the server "
                                "starts.")
@@ -746,16 +618,6 @@ def create_app(settings: Settings, storage: Storage):
 
 
 async def _stored_token(store) -> str:
-    """The generated token, kept in the store.
-
-    In the database rather than a file beside it: everything else that has to
-    survive a restart lives there, it moves with the deployment when the store
-    is Postgres, and a stray credential file next to the data is one more thing
-    to find and protect.
-
-    A fresh one per run would break every connector URL on every restart, which
-    for something self-hosted is constantly.
-    """
     row = await store.get_kv(TOKEN_KEY)
     if row and row.get("token"):
         return str(row["token"])
@@ -765,16 +627,9 @@ async def _stored_token(store) -> str:
 
 
 def _is_reachable_from_elsewhere(settings) -> bool:
-    """Whether something other than this machine could open it.
-
-    A public base url counts even on loopback: it means a tunnel is pointed
-    here, which is exactly the case where open would be a mistake.
-    """
     loopback = settings.host in ("127.0.0.1", "::1", "localhost")
     return bool(settings.public_base_url) or not loopback
 
-
-# ========================================================== auto-reply
 
 @mcp.tool
 async def wa_get_reply_settings() -> dict[str, Any]:
@@ -817,10 +672,7 @@ async def wa_set_reply_settings(settings_json: str) -> dict[str, Any]:
         raw = _json.loads(settings_json)
         if not isinstance(raw, dict):
             raise ToolError("settings_json must be a JSON object")
-        # Merged, not replaced: an agent sending {"enabled": true} means to
-        # switch replies on, not to clear the model and the allowlist with it.
         raw = rt().trigger.settings.merged_with(raw).to_dict()
-        # Never let a redacted value overwrite a real secret.
         current = rt().trigger.settings
         if raw.get("model", {}).get("api_key") == "***":
             raw["model"]["api_key"] = current.model.api_key
@@ -907,8 +759,6 @@ async def wa_delivery_status(chat: str, limit: int = 20) -> dict[str, Any]:
         return _fail(exc)
 
 
-# ============================================================== groups
-
 @mcp.tool
 async def wa_list_groups() -> dict[str, Any]:
     """Groups this number is in, with names."""
@@ -930,8 +780,6 @@ async def wa_group_info(chat: str) -> dict[str, Any]:
     except Exception as exc:
         return _fail(exc)
 
-
-# =============================================================== media
 
 @mcp.tool
 async def wa_download_media(message_id: str) -> dict[str, Any]:

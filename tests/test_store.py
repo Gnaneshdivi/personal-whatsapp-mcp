@@ -1,14 +1,3 @@
-"""Storage contract tests — run against every backend.
-
-Written against the PORT, so the same assertions hold for SQLite, Postgres and
-Mongo. That is the whole value of the abstraction: a difference in behaviour
-between backends shows up here rather than in production.
-
-Postgres and Mongo are skipped unless a server is reachable:
-
-    WA_TEST_POSTGRES=postgresql://t:t@localhost:55433/t
-    WA_TEST_MONGO=mongodb://localhost:57017/wa_test
-"""
 from __future__ import annotations
 
 import os
@@ -39,8 +28,6 @@ async def store(request, tmp_path):
             pytest.skip("WA_TEST_POSTGRES not set")
         from wa_mcp.store.postgres import PostgresStore
 
-        # A schema per test, so cases cannot see each other's rows and nothing
-        # has to be torn down in the right order.
         schema = "t" + uuid.uuid4().hex[:12]
         s = PostgresStore(PG)
         await s.connect()
@@ -72,8 +59,6 @@ def msg(mid: str, chat: str = "1@s.whatsapp.net", text: str | None = "hi",
     return Message(message_id=mid, chat_jid=chat, ts=ts or now_ms(), text=text, **kw)
 
 
-# ------------------------------------------------------------------- writes
-
 async def test_insert_then_read_back(store):
     assert await store.upsert_message(msg("m1", text="hello world")) is True
     got = await store.get_message("m1")
@@ -81,7 +66,6 @@ async def test_insert_then_read_back(store):
 
 
 async def test_duplicate_is_rejected_by_the_index(store):
-    """WhatsApp redelivers on reconnect and history sync replays the same ids."""
     assert await store.upsert_message(msg("m1")) is True
     assert await store.upsert_message(msg("m1")) is False
     assert len(await store.get_messages("1@s.whatsapp.net")) == 1
@@ -95,15 +79,12 @@ async def test_edit_updates_text_and_marks_it(store):
 
 
 async def test_revoke_tombstones_rather_than_deletes(store):
-    """The row is history a model may already have cited."""
     await store.upsert_message(msg("m1", text="oops"))
     await store.apply_revoke("m1", now_ms())
     got = await store.get_message("m1")
     assert got is not None
     assert got.text is None and got.revoked_at is not None
 
-
-# -------------------------------------------------------------------- chats
 
 async def test_unread_climbs_for_them_not_for_us(store):
     await store.touch_chat("1@s.whatsapp.net", now_ms(), from_me=False, preview="a")
@@ -113,7 +94,6 @@ async def test_unread_climbs_for_them_not_for_us(store):
 
 
 async def test_read_state_from_the_phone_overrides_our_count(store):
-    """Our count only ever climbs; the handset is the authority."""
     for _ in range(5):
         await store.touch_chat("1@s.whatsapp.net", now_ms(), from_me=False, preview="x")
     assert await store.unread_count("1@s.whatsapp.net") == 5
@@ -124,7 +104,7 @@ async def test_read_state_from_the_phone_overrides_our_count(store):
 async def test_display_name_never_shows_a_bare_jid(store):
     await store.touch_chat("919812345678@s.whatsapp.net", now_ms(), False, "hi")
     chat = (await store.list_chats())[0]
-    assert chat.public()["name"] == "919812345678"      # falls back to the number
+    assert chat.public()["name"] == "919812345678"
     await store.upsert_chat_meta("919812345678@s.whatsapp.net", name="Asha")
     chat = (await store.list_chats())[0]
     assert chat.public()["name"] == "Asha"
@@ -139,33 +119,23 @@ async def test_chat_meta_does_not_clobber_the_rollup(store):
     assert chat.last_message_ts == ts and chat.last_message_text == "hello"
 
 
-# ------------------------------------------------------------------- search
-
 async def test_search_finds_phrases_and_negation(store):
     await store.upsert_message(msg("m1", text="lets meet at the cafe tomorrow"))
     await store.upsert_message(msg("m2", text="meeting cancelled, no cafe"))
     await store.upsert_message(msg("m3", text="invoice sent yesterday"))
 
     assert {m.message_id for m in await store.search("cafe")} == {"m1", "m2"}
-    # A phrase with no stop words behaves the same everywhere. `"meet at"` does
-    # NOT: Postgres drops "at" as an English stop word, collapsing the phrase to
-    # one stemmed term that also matches "meeting". That is correct for search
-    # quality, so the port does not try to hide it.
     assert [m.message_id for m in await store.search('"cafe tomorrow"')] == ["m1"]
-    # Both spellings of exclusion work on every backend — FTS5 wants "NOT x",
-    # Postgres and Mongo want "-x", so the port accepts either and translates.
     assert [m.message_id for m in await store.search("cafe NOT cancelled")] == ["m1"]
     assert [m.message_id for m in await store.search("cafe -cancelled")] == ["m1"]
 
 
 async def test_stemming_is_available_on_every_backend(store):
-    """All three stem, so a search for the root finds the inflected form."""
     await store.upsert_message(msg("s1", text="the meeting was long"))
     assert [m.message_id for m in await store.search("meet")] == ["s1"]
 
 
 async def test_search_index_follows_edits_and_deletes(store):
-    """The FTS table is external-content — the triggers are what keep it true."""
     await store.upsert_message(msg("m1", text="original wording"))
     assert len(await store.search("original")) == 1
     await store.apply_edit("m1", "replacement wording", now_ms())
@@ -180,11 +150,9 @@ async def test_revoked_messages_drop_out_of_search(store):
 
 
 async def test_malformed_query_degrades_to_a_literal_search(store):
-    """A stray quote must not crash the tool call — and should still answer."""
     await store.upsert_message(msg("m1", text="hello"))
-    assert await store.search('unbalanced "quote') == []       # no match, no crash
+    assert await store.search('unbalanced "quote') == []
 
-    # An apostrophe is the common real case, and it should still find the row.
     await store.upsert_message(msg("m2", text="it's fine"))
     assert [m.message_id for m in await store.search("it's fine")] == ["m2"]
 
@@ -197,8 +165,6 @@ async def test_search_scopes_to_a_chat_and_a_window(store):
     assert [m.message_id for m in await store.search("budget", from_ts=new - 1000)] == ["m2"]
     assert [m.message_id for m in await store.search("budget", to_ts=old + 1000)] == ["m1"]
 
-
-# ---------------------------------------------------------------- paging etc
 
 async def test_get_messages_pages_backwards(store):
     base = now_ms()
@@ -241,11 +207,7 @@ async def test_raw_proto_never_leaks_into_public_output(store):
     assert "raw_proto" not in got.public()
 
 
-# ------------------------------------------------------- media round trip
-
 async def test_media_metadata_and_ref_survive_every_backend(store):
-    """The media path depends on media_meta surviving storage — it is a dict on
-    SQL backends and a subdocument on Mongo, so it gets asserted here."""
     await store.upsert_message(Message(
         "med1", "1@s.whatsapp.net", now_ms(), type="image",
         media_meta={"mime_type": "image/jpeg", "kind": "image", "length": 1234},
@@ -263,7 +225,6 @@ async def test_media_metadata_and_ref_survive_every_backend(store):
 
 
 async def test_pinned_chats_sort_first(store):
-    """As WhatsApp does — pinned above everything, then recency."""
     base = now_ms()
     await store.touch_chat("old@s.whatsapp.net", base, False, "old")
     await store.touch_chat("new@s.whatsapp.net", base + 60_000, False, "new")
@@ -284,9 +245,6 @@ async def test_pinned_and_archived_round_trip(store):
 
 
 async def test_filters_run_in_the_query_not_on_the_page(store):
-    """With 30 direct chats newer than every group, a groups filter applied
-    AFTER a limit of 10 returns nothing — which reads as missing data rather
-    than as a bug. Live: 295 groups existed and the Groups tab showed 4."""
     base = now_ms()
     for i in range(30):
         await store.touch_chat(f"d{i}@s.whatsapp.net", base + i * 1000, False, "hi")
@@ -309,11 +267,7 @@ async def test_unread_filter(store):
     assert [c.chat_jid for c in got] == ["unread@s.whatsapp.net"]
 
 
-# ------------------------------------------------------- delivery status
-
 async def test_status_advances_but_never_goes_backwards(store):
-    """Receipts arrive out of order and WhatsApp resends them. A DELIVERED
-    landing after a READ must not un-read the message."""
     await store.upsert_message(Message("s1", "1@s.whatsapp.net", now_ms(),
                                        is_from_me=True, text="hi"))
     assert await store.set_status(["s1"], "delivered", now_ms()) == ["s1"]
@@ -322,14 +276,11 @@ async def test_status_advances_but_never_goes_backwards(store):
     assert await store.set_status(["s1"], "read", now_ms()) == ["s1"]
     assert (await store.get_message("s1")).status == "read"
 
-    # late DELIVERED — ignored, and reported as no change
     assert await store.set_status(["s1"], "delivered", now_ms()) == []
     assert (await store.get_message("s1")).status == "read"
 
 
 async def test_only_changed_ids_are_returned(store):
-    """Callers emit one event per real transition; a resent receipt must not
-    produce a second 'they read it' for an agent to act on twice."""
     for i in range(3):
         await store.upsert_message(Message(f"m{i}", "1@s.whatsapp.net", now_ms(),
                                            is_from_me=True, text="x"))
@@ -338,7 +289,6 @@ async def test_only_changed_ids_are_returned(store):
 
 
 async def test_incoming_messages_have_no_status(store):
-    """Status is about our own messages; theirs would be meaningless."""
     await store.upsert_message(Message("t1", "1@s.whatsapp.net", now_ms(), text="yo"))
     assert await store.set_status(["t1"], "read", now_ms()) == []
     assert (await store.get_message("t1")).public()["status"] is None
@@ -352,15 +302,10 @@ async def test_a_sent_message_starts_at_sent(store):
 
 
 async def test_a_new_column_migrates_instead_of_a_rebuild(tmp_path):
-    """The alternative was taken once and cost 6,225 messages: the database was
-    deleted to pick up a new column, and history sync only runs at pair time so
-    it could not be recovered. Additive migration is the difference between an
-    upgrade and permanent data loss."""
     import aiosqlite
     from wa_mcp.store.sqlite import SQLiteStore
 
     path = tmp_path / "old.db"
-    # A database from before `status` existed.
     async with aiosqlite.connect(path) as db:
         await db.executescript("""
             CREATE TABLE messages (
@@ -392,16 +337,7 @@ async def test_a_new_column_migrates_instead_of_a_rebuild(tmp_path):
         await store.close()
 
 
-# ------------------------------------------------- ticks in the chat list
-
 async def test_chat_list_carries_the_newest_messages_status(store):
-    """The sidebar shows the same ticks as the open thread.
-
-    Derived from the messages table on every read rather than cached on the
-    chat row. A receipt arrives long after the message it refers to, so a
-    stored copy drifts: the thread would show two blue ticks while the list
-    beside it still showed one grey one for the same message.
-    """
     await store.upsert_message(msg("m1", ts=1000, is_from_me=True))
     await store.touch_chat("1@s.whatsapp.net", 1000, True, "hi")
 
@@ -410,7 +346,6 @@ async def test_chat_list_carries_the_newest_messages_status(store):
     assert chat.last_from_me is True
     assert chat.last_status == "sent"
 
-    # The receipt lands. Nothing rewrites the chat row -- the list still moves.
     await store.set_status(["m1"], "read", 2000)
     (chat,) = [c for c in await store.list_chats(limit=10)
                if c.chat_jid == "1@s.whatsapp.net"]
@@ -418,11 +353,6 @@ async def test_chat_list_carries_the_newest_messages_status(store):
 
 
 async def test_no_tick_when_the_last_word_was_theirs(store):
-    """WhatsApp shows a tick only against your own message.
-
-    Their reply landing after yours must clear it, or the list claims delivery
-    of a message that is no longer the one being previewed.
-    """
     await store.upsert_message(msg("mine", ts=1000, is_from_me=True))
     await store.upsert_message(msg("theirs", ts=2000, is_from_me=False))
     await store.touch_chat("1@s.whatsapp.net", 2000, False, "their reply")
@@ -434,7 +364,6 @@ async def test_no_tick_when_the_last_word_was_theirs(store):
 
 
 async def test_a_chat_with_no_messages_has_no_tick(store):
-    """Chats arrive from history sync before any message body does."""
     await store.upsert_chat_meta("2@s.whatsapp.net", name="Empty")
     (chat,) = [c for c in await store.list_chats(limit=10)
                if c.chat_jid == "2@s.whatsapp.net"]
@@ -443,28 +372,15 @@ async def test_a_chat_with_no_messages_has_no_tick(store):
 
 
 async def test_two_messages_in_the_same_second_keep_their_order(store):
-    """WhatsApp timestamps are second-resolution — every ts ends in 000.
-
-    Anything sent inside one second compares equal, so without a tie-break the
-    order is whatever the engine returns. The disclosure and the reply it
-    precedes land in the same second, and the thread showed them reversed
-    against WhatsApp itself.
-    """
     ts = 1787637108000
     await store.upsert_message(msg("first", ts=ts, text="sent first"))
     await store.upsert_message(msg("second", ts=ts, text="sent second"))
 
     rows = await store.get_messages("1@s.whatsapp.net", limit=10)
-    # Newest first, so the one sent second leads.
     assert [m.text for m in rows] == ["sent second", "sent first"]
 
 
 async def test_kv_keys_can_be_listed_by_prefix(store):
-    """Revoking every issued credential needs enumeration.
-
-    Tokens are one row each, so without this the only way to sign a lost
-    connector out is to wait for it to expire.
-    """
     for key in ("token.aaa", "token.bbb", "other.ccc",
                 "trigger.settings"):
         await store.put_kv(key, {"x": 1})
@@ -475,20 +391,12 @@ async def test_kv_keys_can_be_listed_by_prefix(store):
 
 
 async def test_a_prefix_with_a_wildcard_is_not_a_pattern(store):
-    """LIKE treats % and _ as wildcards; a key containing one must not match
-    everything."""
     await store.put_kv("a%b", {"x": 1})
     await store.put_kv("azzb", {"x": 1})
     assert await store.list_kv("a%b") == ["a%b"]
 
 
 async def test_purge_removes_everything_including_the_search_index(store):
-    """Logging out must leave nothing readable behind.
-
-    The FTS index is external-content, so rows deleted from `messages` can
-    still be returned by a search until it is rebuilt — a purge that left
-    message text findable would be worse than none, because it looks done.
-    """
     for i in range(3):
         await store.upsert_message(msg(f"m{i}", text=f"secret {i}"))
     await store.upsert_chat_meta("1@s.whatsapp.net", name="Someone")
@@ -504,7 +412,6 @@ async def test_purge_removes_everything_including_the_search_index(store):
 
 
 async def test_purge_leaves_the_store_usable(store):
-    """It is not a teardown — the same process pairs again afterwards."""
     await store.upsert_message(msg("m1", text="before"))
     await store.purge()
     await store.upsert_message(msg("m2", text="after"))
@@ -513,8 +420,6 @@ async def test_purge_leaves_the_store_usable(store):
 
 
 async def test_a_push_name_becomes_the_chat_name_when_there_is_none(store):
-    """An unsaved number has no address-book entry, so the chat renders as a
-    masked number for someone whose name arrives on every message they send."""
     from wa_mcp.whatsapp.contacts import is_placeholder
 
     await store.upsert_chat_meta("1@s.whatsapp.net", name="+91∙∙∙∙∙∙∙∙88")
@@ -525,16 +430,11 @@ async def test_a_push_name_becomes_the_chat_name_when_there_is_none(store):
     chat = await store.get_chat("1@s.whatsapp.net")
     assert chat.name == "Asif"
 
-    # And it is findable by that name, which is the point.
     found = await store.list_chats(limit=10, query="asif")
     assert [c.chat_jid for c in found] == ["1@s.whatsapp.net"]
 
 
 async def test_an_unserialisable_media_value_does_not_lose_the_message(store):
-    """Losing the metadata for one attachment is a blemish. Raising inside the
-    INSERT loses the message — and on the history path, every message after it
-    in that conversation. That is how 6,354 messages arrived with zero
-    attachments among them."""
     from wa_mcp.store.base import Message
 
     ok = await store.upsert_message(Message(
@@ -562,9 +462,6 @@ async def test_media_metadata_survives_a_round_trip(store):
 
 async def test_our_own_media_is_recorded_so_the_web_can_serve_it(store, tmp_path,
                                                                 monkeypatch):
-    """The download path decrypts an incoming attachment from its protobuf, and
-    a send has no protobuf — so our own images were rows the media route
-    answered 404 for, and the chat showed a caption with nothing above it."""
     from wa_mcp.whatsapp.client import WhatsApp
     from wa_mcp.config import Settings
 
@@ -586,7 +483,6 @@ async def test_our_own_media_is_recorded_so_the_web_can_serve_it(store, tmp_path
     assert row is not None and row.type == "image"
     assert row.media_meta["mimetype"] == "image/png"
     assert row.media_meta["file_length"] == len(png)
-    # and the bytes are where the media route looks
     from pathlib import Path
     assert Path(row.media_ref).read_bytes() == png
 
@@ -610,8 +506,6 @@ async def test_a_plain_text_send_records_no_media(store, tmp_path, monkeypatch):
     assert row.media_meta == {} and row.media_ref is None
 
 
-# ------------------------------------------------- adopting a self-set name
-
 def _wa(store, tmp_path, names=None):
     from wa_mcp.config import Settings
     from wa_mcp.whatsapp.client import WhatsApp
@@ -631,7 +525,6 @@ class _Src:
 
 
 async def _name_of(store, jid):
-    """A chat with nothing worth storing may not have a row at all."""
     chat = await store.get_chat(jid)
     return getattr(chat, "name", None) or None
 
@@ -644,8 +537,6 @@ async def test_a_chat_with_no_name_takes_the_senders_own(store, tmp_path):
 
 
 async def test_a_masked_number_is_replaced(store, tmp_path):
-    """WhatsApp sends "+91∙∙∙∙∙∙∙∙88" as the name of a chat whose contact card
-    it will not share. Stored, it is worse than no name."""
     wa = _wa(store, tmp_path)
     await store.upsert_chat_meta("1@s.whatsapp.net", name="+91∙∙∙∙∙∙∙∙88")
     await wa._adopt_push_name("1@s.whatsapp.net", _Src(), "Asif")
@@ -667,8 +558,6 @@ async def test_an_existing_real_name_is_not_overwritten(store, tmp_path):
 
 
 async def test_a_group_never_takes_a_members_name(store, tmp_path):
-    """In a group the push name belongs to whoever sent that message. Adopting
-    it renames the group after the last person who spoke."""
     wa = _wa(store, tmp_path)
     await store.upsert_chat_meta("123-456@g.us")
     await wa._adopt_push_name("123-456@g.us", _Src(), "Asif")

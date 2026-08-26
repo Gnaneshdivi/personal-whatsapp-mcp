@@ -1,11 +1,3 @@
-"""Entrypoint: one process serving MCP and the web UI.
-
-    suprai-whatsapp-mcp                 # or: python -m wa_mcp
-
-Nothing is required to be configured. With no environment set it stores in the
-user data directory, listens on 127.0.0.1:8100, and tells you where to open a
-browser to link a number.
-"""
 from __future__ import annotations
 
 import argparse
@@ -51,17 +43,9 @@ def _banner(settings: Settings, storage, token: str) -> str:
 
 
 def _load_dotenv() -> str | None:
-    """Read .env from the working directory, if there is one.
-
-    Configuration is a dozen environment variables, and on a server they have
-    to live somewhere. A file next to the process is the least surprising
-    place, and it means `docker run --env-file` and a bare `python -m wa_mcp`
-    are configured the same way. Real environment variables always win, so a
-    stale .env cannot override what the platform set.
-    """
     try:
         from dotenv import find_dotenv, load_dotenv
-    except ImportError:          # optional at runtime; only the file is lost
+    except ImportError:
         return None
     path = find_dotenv(usecwd=True)
     if path:
@@ -70,13 +54,6 @@ def _load_dotenv() -> str | None:
 
 
 def _mint_routine_token(storage) -> int:
-    """Print a standing credential for a routine's WhatsApp connector.
-
-    Without this the only way to get one was to open a Python REPL and call an
-    internal function, so in practice everyone would use their full token —
-    which has all 22 tools and every conversation, and defeats the point of the
-    scoping entirely.
-    """
     import asyncio
 
     from .delivery import mint_routine
@@ -145,7 +122,6 @@ def main(argv: list[str] | None = None) -> int:
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
     )
-    # After basicConfig, or the line goes nowhere.
     if env_file:
         logging.getLogger("wa_mcp").info("configuration read from %s", env_file)
 
@@ -168,9 +144,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"auth token    {'set' if settings.auth_token else 'NOT SET'}")
         return 0
 
-    # flush: stdout is block-buffered when it is a file rather than a terminal,
-    # so running this as a service put the banner — and the URL you need — in a
-    # buffer that is only written when the process exits.
     print(_banner(settings, storage, settings.auth_token), flush=True)
 
     import uvicorn

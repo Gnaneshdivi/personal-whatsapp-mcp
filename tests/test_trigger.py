@@ -1,5 +1,3 @@
-"""The reply engine. This is the feature that gets numbers banned, so the
-safety gates get more tests than anything else in the project."""
 from __future__ import annotations
 
 import httpx
@@ -56,8 +54,6 @@ def enabled(**over) -> TriggerSettings:
         "enabled": True, "backend": "model",
         "model": {"base_url": "http://m", "model": "gpt", "api_key": "k"},
         "reply": {"personal": "all", "cooldown_seconds": 0, **over.pop("reply", {})},
-        # Off unless a test is about it: the disclosure is a separate message
-        # sent before the first reply, and it would shift every index here.
         "disclosure": {"enabled": False},
         **over,
     })
@@ -80,10 +76,7 @@ def mock_model(reply="hi there", status=200):
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
-# =================================================== defaults are off
-
 async def test_a_fresh_install_says_nothing(rt):
-    """The most important test in the file."""
     eng = TriggerEngine(rt)
     d = await eng.consider(inbound())
     assert d.fired is False
@@ -100,8 +93,6 @@ async def test_enabling_without_scope_still_says_nothing(rt):
     assert "no chats are in scope" in d.reason
 
 
-# =================================================== the hard safety gates
-
 async def test_never_replies_to_our_own_message(rt):
     eng = TriggerEngine(rt); eng.settings = enabled(); eng._http = mock_model()
     d = await eng.consider(inbound(is_from_me=True))
@@ -109,7 +100,6 @@ async def test_never_replies_to_our_own_message(rt):
 
 
 async def test_loop_guard_blocks_our_own_generated_ids(rt):
-    """A webhook that echoes text otherwise puts two bots in a forever loop."""
     eng = TriggerEngine(rt); eng.settings = enabled(); eng._http = mock_model()
     eng.note_generated("m1")
     d = await eng.consider(inbound(message_id="m1"))
@@ -124,8 +114,6 @@ async def test_a_sent_reply_is_registered_against_the_loop_guard(rt):
 
 
 async def test_nothing_fires_while_history_is_syncing(rt):
-    """Sync replays OLD messages through the live path — the whole reason the
-    gate exists."""
     rt.wa = FakeWA(ready=False)
     rt.wa.sync.connected()
     rt.wa.sync.offline_preview(total=500)
@@ -145,8 +133,6 @@ async def test_empty_text_is_ignored(rt):
     eng = TriggerEngine(rt); eng.settings = enabled(); eng._http = mock_model()
     assert (await eng.consider(inbound(text="   "))).fired is False
 
-
-# =================================================== scope
 
 async def test_groups_are_off_by_default_even_when_personal_is_on(rt):
     eng = TriggerEngine(rt); eng.settings = enabled(); eng._http = mock_model()
@@ -185,8 +171,6 @@ async def test_allowlist_matches_despite_a_device_suffix(rt):
     assert d.fired is True
 
 
-# =================================================== rate control
-
 async def test_cooldown_collapses_a_burst_into_one_reply(rt):
     eng = TriggerEngine(rt)
     eng.settings = enabled(reply={"personal": "all", "cooldown_seconds": 30})
@@ -209,7 +193,6 @@ async def test_hourly_cap(rt):
 
 
 async def test_a_failing_send_still_burns_the_cooldown(rt):
-    """Otherwise a broken backend retries as fast as messages arrive."""
     eng = TriggerEngine(rt)
     eng.settings = enabled(reply={"personal": "all", "cooldown_seconds": 30})
     eng._http = mock_model()
@@ -220,10 +203,7 @@ async def test_a_failing_send_still_burns_the_cooldown(rt):
     assert "cooldown" in d2.reason
 
 
-# =================================================== backends
-
 async def test_model_backend_sends_real_conversation_turns(rt):
-    """History as roles, not a blob pasted into the prompt."""
     captured = {}
 
     async def handler(request):
@@ -242,7 +222,6 @@ async def test_model_backend_sends_real_conversation_turns(rt):
     roles = [m["role"] for m in captured["messages"]]
     assert roles[0] == "system"
     assert "user" in roles and "assistant" in roles
-    # Inbound content is quoted inside a nonce tag — see test_injection.py.
     assert "tomorrow" in captured["messages"][-1]["content"]
     assert captured["messages"][-1]["content"].startswith("<msg id=")
 
@@ -271,7 +250,6 @@ async def test_webhook_backend_reads_a_nested_reply_path(rt):
 
 
 async def test_a_quote_in_the_message_does_not_break_the_json_body(rt):
-    """Happens on day one, not eventually."""
     seen = {}
 
     async def handler(request):
@@ -289,8 +267,6 @@ async def test_a_quote_in_the_message_does_not_break_the_json_body(rt):
     assert d.fired is True
     assert seen["body"]["text"]
 
-
-# =================================================== output guards
 
 async def test_an_over_long_reply_is_trimmed(rt):
     eng = TriggerEngine(rt)
@@ -314,19 +290,15 @@ async def test_typing_indicator_brackets_the_send(rt):
     assert rt.wa.typing == [True, False]
 
 
-# =================================================== the decision log
-
 async def test_every_decision_is_logged_with_a_reason(rt):
     eng = TriggerEngine(rt)
-    await eng.consider(inbound())                       # off
+    await eng.consider(inbound())
     eng.settings = enabled(); eng._http = mock_model()
-    await eng.consider(inbound(message_id="m2"))        # sent
+    await eng.consider(inbound(message_id="m2"))
     reasons = [e["reason"] for e in eng.log]
     assert "sent" in reasons
     assert any("switched off" in r for r in reasons)
 
-
-# =================================================== settings
 
 async def test_settings_round_trip_through_the_store(rt):
     eng = TriggerEngine(rt)
@@ -352,8 +324,6 @@ def test_unknown_settings_keys_do_not_break_startup():
                                    "model": {"model": "m", "future_field": 2}})
     assert s.enabled and s.model.model == "m"
 
-
-# =================================================== helpers
 
 def test_dig_walks_lists_and_dicts():
     assert dig({"choices": [{"message": {"content": "hi"}}]},

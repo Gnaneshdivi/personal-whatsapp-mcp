@@ -1,4 +1,3 @@
-"""Guardrails, grounding, notification routing and image replies."""
 from __future__ import annotations
 
 import httpx
@@ -51,8 +50,6 @@ def settings(**over) -> TriggerSettings:
         "enabled": True, "backend": "model",
         "model": {"base_url": "http://m", "model": "gpt"},
         "reply": {"personal": "all", "cooldown_seconds": 0},
-        # Off unless a test is about it: these assert on the reply, and the
-        # disclosure is a separate message that would shift every index.
         "disclosure": {"enabled": False},
     }
     base.update(over)
@@ -76,8 +73,6 @@ def model(reply="ok", capture=None):
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
-# ============================================================ grounding
-
 def test_context_only_is_the_default():
     g = Guardrails()
     assert g.context_only is True
@@ -88,7 +83,6 @@ def test_context_only_is_the_default():
 
 
 def test_external_knowledge_is_stated_in_words_not_implied():
-    """The flag has to be visible to the model, not just an absent restriction."""
     p = Guardrails(allow_external_knowledge=True).as_prompt()
     assert "general knowledge" in p
     assert "search" in p
@@ -113,10 +107,7 @@ async def test_turning_external_on_changes_what_the_model_is_told(rt):
     assert "general knowledge" in captured["messages"][0]["content"]
 
 
-# ============================================================ blocklist
-
 async def test_a_blocked_keyword_never_reaches_the_model(rt):
-    """Deterministic and pre-model — it cannot be talked around."""
     called = []
 
     async def handler(request):
@@ -159,8 +150,6 @@ async def test_fallback_can_be_switched_off(rt):
     assert d.fired is False and rt.wa.sent == []
 
 
-# ============================================================ allowlist
-
 async def test_require_allowed_topic_rejects_everything_else(rt):
     eng = TriggerEngine(rt)
     eng.settings = settings(guardrails={"allowed_topics": ["order", "delivery"],
@@ -182,16 +171,7 @@ async def test_allowed_topics_are_also_told_to_the_model(rt):
     assert "billing" in captured["messages"][0]["content"]
 
 
-# ============================================================ notify
-
 async def test_handoff_marker_is_stripped_before_the_customer_sees_it(rt):
-    """And the owner's wording is sent, not whatever it improvised.
-
-    The marker means it could not answer, so the sentence it wrote alongside is
-    the least reliable thing in the reply — asked a question in Telugu it
-    apologised in broken transliteration. The configured fallback is fixed and
-    correct; the marker itself must never reach anyone.
-    """
     eng = TriggerEngine(rt)
     eng.settings = settings(
         notify={"on_handoff": True, "jid": "919999999999"},
@@ -205,7 +185,6 @@ async def test_handoff_marker_is_stripped_before_the_customer_sees_it(rt):
 
 
 async def test_with_no_fallback_configured_its_own_words_are_used(rt):
-    """Something has to go out; silence leaves them waiting."""
     eng = TriggerEngine(rt)
     eng.settings = settings(notify={"on_handoff": True, "jid": "919999999999"},
                             guardrails={"fallback_message": ""})
@@ -215,7 +194,6 @@ async def test_with_no_fallback_configured_its_own_words_are_used(rt):
 
 
 async def test_notification_goes_to_the_configured_number(rt):
-    """The business case: customers write to one line, the owner reads another."""
     eng = TriggerEngine(rt)
     eng.settings = settings(notify={"jid": "919999999999", "on_handoff": True})
     eng._http = model(reply="one moment [[NOTIFY]]")
@@ -223,23 +201,15 @@ async def test_notification_goes_to_the_configured_number(rt):
     assert d.notified == "919999999999@s.whatsapp.net"
     targets = [to for to, _ in rt.wa.sent]
     assert "919999999999@s.whatsapp.net" in targets
-    assert "911@s.whatsapp.net" in targets      # the customer still got a reply
+    assert "911@s.whatsapp.net" in targets
 
 
 async def test_with_no_number_configured_nothing_is_alerted(rt):
-    """Blank means off, not "send it to whoever wrote in".
-
-    The alert reads "Needs you: … Their message: … Reason: …". Falling back to
-    the incoming chat delivered that to the person it is about — internal
-    wording sent to a customer — and made clearing the field look like it
-    disabled alerts while it silently redirected them.
-    """
     eng = TriggerEngine(rt)
-    eng.settings = settings(notify={"on_handoff": True})     # no jid
+    eng.settings = settings(notify={"on_handoff": True})
     eng._http = model(reply="hold on [[NOTIFY]]")
     d = await eng.consider(inbound())
     assert d.notified is None
-    # The reply still goes out; only the alert is withheld.
     assert [to for to, _ in rt.wa.sent] == ["911@s.whatsapp.net"]
     assert "Needs you" not in rt.wa.sent[0][1]
 
@@ -266,8 +236,6 @@ async def test_the_notification_carries_the_reason_and_who_it_was(rt):
     assert "I need to speak to a person" in alert
     assert "human" in alert
 
-
-# ============================================================= media
 
 def test_media_extraction_handles_markdown_and_bare_urls():
     text, urls = extract_media("here you go ![cat](https://x.io/c.png) enjoy")
@@ -318,7 +286,7 @@ async def test_a_web_page_is_refused(rt):
     eng.settings = settings(send_media=True)
     eng._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     d = await eng.consider(inbound())
-    assert d.fired is True and d.media == 0     # text still went, file did not
+    assert d.fired is True and d.media == 0
     assert rt.wa.media == []
 
 
@@ -351,7 +319,7 @@ async def test_an_image_only_reply_still_sends(rt):
     eng._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     d = await eng.consider(inbound())
     assert d.fired is True and d.media == 1
-    assert rt.wa.sent == []          # nothing to say, only a picture
+    assert rt.wa.sent == []
 
 
 async def test_sent_images_are_registered_against_the_loop_guard(rt):
@@ -370,17 +338,14 @@ async def test_sent_images_are_registered_against_the_loop_guard(rt):
     assert "i1" in eng._generated
 
 
-# ====================================================== notify me when
-
 async def test_watch_keyword_alerts_even_with_replies_off(rt):
-    """The point of watch rules: monitor a number without answering on it."""
     eng = TriggerEngine(rt)
     eng.settings = TriggerSettings.from_dict({
         "enabled": False,
         "notify": {"jid": "919999999999", "on_keywords": ["urgent"]},
     })
     d = await eng.consider(inbound("this is URGENT please help"))
-    assert d.fired is False                      # no reply
+    assert d.fired is False
     assert d.notified == "919999999999@s.whatsapp.net"
     assert any(to.startswith("919999999999") for to, _ in rt.wa.sent)
 
@@ -419,7 +384,6 @@ async def test_groups_are_not_watched_unless_asked(rt):
 
 
 async def test_watching_is_held_during_sync_like_replies(rt):
-    """History replay would otherwise alert for every old matching message."""
     from wa_mcp.whatsapp.sync import SyncTracker
     rt.wa.sync = SyncTracker()
     rt.wa.sync.connected(); rt.wa.sync.offline_preview(total=200)
@@ -437,8 +401,8 @@ async def test_a_watched_message_can_also_be_replied_to(rt):
     d = await eng.consider(inbound("urgent problem"))
     assert d.fired is True and d.notified is not None
     targets = [to for to, _ in rt.wa.sent]
-    assert "911@s.whatsapp.net" in targets           # the reply
-    assert "919999999999@s.whatsapp.net" in targets  # the alert
+    assert "911@s.whatsapp.net" in targets
+    assert "919999999999@s.whatsapp.net" in targets
 
 
 async def test_our_own_messages_never_trigger_a_watch(rt):
@@ -449,14 +413,7 @@ async def test_our_own_messages_never_trigger_a_watch(rt):
     assert d.notified is None
 
 
-# --------------------------------------------------- media beyond images
-
 def test_each_kind_is_routed_to_the_right_sender():
-    """WhatsApp needs to be told what an attachment is.
-
-    Sending a voice note as a photo does not degrade -- it fails. Anything
-    unrecognised becomes a document, which always works.
-    """
     assert kind_for("https://x.io/chart.png") == "image"
     assert kind_for("https://x.io/clip.mp4") == "video"
     assert kind_for("https://x.io/note.ogg") == "audio"
@@ -465,7 +422,6 @@ def test_each_kind_is_routed_to_the_right_sender():
 
 
 def test_the_mime_type_breaks_ties_when_there_is_no_extension():
-    """Signed URLs and CDN redirects routinely arrive with no extension."""
     assert kind_for("https://x.io/download?id=9", "image/png") == "image"
     assert kind_for("https://x.io/download?id=9", "audio/mpeg") == "audio"
     assert kind_for("https://x.io/download?id=9", "") == "document"
@@ -483,7 +439,6 @@ def test_extraction_picks_up_documents_and_audio_not_just_pictures():
 
 
 async def test_a_pdf_is_sent_as_a_document(rt):
-    """The end-to-end shape of the change: a non-image lands as an attachment."""
     async def handler(request):
         if "chat/completions" in str(request.url):
             return httpx.Response(200, json={"choices": [{"message": {
@@ -500,11 +455,6 @@ async def test_a_pdf_is_sent_as_a_document(rt):
 
 
 async def test_a_saved_config_from_before_the_mute_list_still_loads(rt):
-    """`Never alert me about` was removed. Anyone who saved one has the key.
-
-    from_dict drops what it does not recognise, so this is only a guard against
-    someone later making it strict and breaking every existing install.
-    """
     eng = TriggerEngine(rt)
     eng.settings = TriggerSettings.from_dict({
         "notify": {"jid": "919999999999", "on_keywords": ["urgent"],
@@ -513,10 +463,7 @@ async def test_a_saved_config_from_before_the_mute_list_still_loads(rt):
     assert d.notified is not None, "the stale key should be ignored, not obeyed"
 
 
-# ------------------------------------------------------- where alerts go
-
 async def test_alerts_go_to_your_own_chat_when_route_is_me(rt):
-    """The sensible setting on a personal number: your Message-yourself chat."""
     rt.wa.self_jid = "919100828649@s.whatsapp.net"
     eng = TriggerEngine(rt)
     eng.settings = TriggerSettings.from_dict({
@@ -528,12 +475,6 @@ async def test_alerts_go_to_your_own_chat_when_route_is_me(rt):
 
 
 async def test_route_chat_sends_the_alert_to_the_person_it_is_about(rt):
-    """Allowed, but only on purpose — they read it.
-
-    Kept as a choice because someone watching their own personal number may
-    genuinely want the note in the thread. It is no longer what an empty field
-    silently does.
-    """
     eng = TriggerEngine(rt)
     eng.settings = TriggerSettings.from_dict({
         "notify": {"route": "chat", "on_keywords": ["urgent"]}})
@@ -560,7 +501,6 @@ async def test_route_off_sends_nothing(rt):
 
 
 async def test_route_number_with_no_number_sends_nothing(rt):
-    """Half-configured must fail closed, not fall back to the customer."""
     eng = TriggerEngine(rt)
     eng.settings = TriggerSettings.from_dict({
         "notify": {"route": "number", "jid": "", "on_keywords": ["urgent"]}})
@@ -569,7 +509,6 @@ async def test_route_number_with_no_number_sends_nothing(rt):
 
 
 async def test_a_config_saved_before_routes_existed_keeps_alerting(rt):
-    """Anyone who set a number did so to be alerted; that must survive."""
     eng = TriggerEngine(rt)
     eng.settings = TriggerSettings.from_dict({
         "notify": {"jid": "919999999999", "on_keywords": ["urgent"]}})
@@ -579,11 +518,6 @@ async def test_a_config_saved_before_routes_existed_keeps_alerting(rt):
 
 
 async def test_the_alert_carries_a_tappable_link_to_the_chat(rt):
-    """A bare address is not a link anywhere.
-
-    Reading an alert used to mean copying the number out by hand to find the
-    conversation it was about. WhatsApp turns a wa.me URL into a tap.
-    """
     rt.wa.self_jid = "919100828649@s.whatsapp.net"
     eng = TriggerEngine(rt)
     eng.settings = TriggerSettings.from_dict({
@@ -594,11 +528,6 @@ async def test_the_alert_carries_a_tappable_link_to_the_chat(rt):
 
 
 async def test_a_lid_sender_gets_no_link_rather_than_a_wrong_one(rt):
-    """LIDs are all digits but are not phone numbers.
-
-    Building wa.me from one produces a link to a number that is not theirs and
-    may well be somebody else's, which is worse than no link at all.
-    """
     from wa_mcp.trigger.backends import Context
 
     ctx = Context(message="hi", chat_name="C", chat_jid="207696196305131@lid",
@@ -608,20 +537,13 @@ async def test_a_lid_sender_gets_no_link_rather_than_a_wrong_one(rt):
     assert "wa.me" not in ctx.tokens()["chat_link"]
 
 
-# ------------------------------------------------------ backend endpoint
-
 @pytest.mark.parametrize("base", [
     "https://openrouter.ai/api/v1",
     "https://openrouter.ai/api/v1/",
-    "https://openrouter.ai/api/v1/chat/completions",     # what providers document
+    "https://openrouter.ai/api/v1/chat/completions",
     "https://openrouter.ai/api/v1/chat/completions/",
 ])
 async def test_the_endpoint_is_reached_however_the_base_url_was_written(base):
-    """Providers document the full endpoint, so that is what gets pasted.
-
-    Appending blindly produced .../chat/completions/chat/completions, a 404,
-    and a silent no-reply with nothing to point at.
-    """
     import httpx
 
     from wa_mcp.trigger.backends import Context, reply_via_model
@@ -643,11 +565,6 @@ async def test_the_endpoint_is_reached_however_the_base_url_was_written(base):
 
 
 async def test_a_dead_backend_is_logged_loudly_not_at_debug(rt, caplog):
-    """A broken backend is not the same as a message that was out of scope.
-
-    Both were logged at debug, so a misconfigured endpoint looked exactly like
-    normal quiet operation — no reply, nothing in the log, nothing to chase.
-    """
     import logging
 
     async def handler(request):

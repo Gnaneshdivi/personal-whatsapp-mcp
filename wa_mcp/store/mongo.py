@@ -1,20 +1,3 @@
-"""MongoDB backend.
-
-For people whose platform is already on Mongo. Two things behave differently
-here and both are worth knowing before choosing it:
-
-**Search is weaker.** Mongo's `$text` handles quoted phrases and `-exclusion`,
-but a collection may carry only one text index and `textScore` ranks more
-crudely than `ts_rank` or `bm25`. Good enough to find a message; not as good at
-putting the most relevant one first.
-
-**The chat rollup is not transactional.** Multi-document transactions need a
-replica set, and plenty of people run a standalone node. Rather than require
-one, `touch_chat` is written so a torn write self-heals: the timestamp uses
-`$max` and the preview is only overwritten by a newer message, so replaying the
-same message is a no-op and losing the rollup update costs a stale preview
-until the next message arrives — never a wrong unread count.
-"""
 from __future__ import annotations
 
 import logging
@@ -43,11 +26,9 @@ class MongoStore(Store):
         await self.db.messages.create_index("message_id", unique=True)
         await self.db.messages.create_index([("chat_jid", 1), ("ts", -1)])
         await self.db.messages.create_index([("ts", -1)])
-        # One text index per collection, so it covers the only field worth
-        # searching. Named explicitly to make it obvious in `getIndexes`.
         try:
             await self.db.messages.create_index([("text", "text")], name="text_search")
-        except Exception as exc:               # already present with a different spec
+        except Exception as exc:
             log.debug("text index: %s", exc)
         await self.db.chats.create_index("chat_jid", unique=True)
         await self.db.chats.create_index([("last_message_ts", -1)])
@@ -58,7 +39,6 @@ class MongoStore(Store):
             self._client.close()
             self._client = None
 
-    # ---------------------------------------------------------------- writes
 
     async def upsert_message(self, m: Message) -> bool:
         from pymongo.errors import DuplicateKeyError
@@ -76,7 +56,6 @@ class MongoStore(Store):
             await self.db.messages.insert_one(doc)
             return True
         except DuplicateKeyError:
-            # Idempotency is the unique index, exactly as on the SQL backends.
             return False
 
     async def apply_edit(self, message_id: str, text: str | None, ts: int) -> None:
@@ -109,15 +88,12 @@ class MongoStore(Store):
 
     async def touch_chat(self, chat_jid: str, ts: int, from_me: bool,
                          preview: str | None) -> None:
-        """Written to be safe without a transaction — see the module docstring."""
         update: dict[str, Any] = {
             "$max": {"last_message_ts": int(ts)},
             "$inc": {"unread_count": 0 if from_me else 1},
             "$setOnInsert": {"chat_jid": chat_jid, "is_group": False, "archived": False},
         }
         await self.db.chats.update_one({"chat_jid": chat_jid}, update, upsert=True)
-        # Only a newer message may replace the preview, so an out-of-order
-        # delivery cannot make the chat list show an older line.
         await self.db.chats.update_one(
             {"chat_jid": chat_jid, "last_message_ts": {"$lte": int(ts)}},
             {"$set": {"last_message_text": preview}})
@@ -167,7 +143,6 @@ class MongoStore(Store):
              "$setOnInsert": {"chat_jid": chat_jid}},
             upsert=True)
 
-    # ----------------------------------------------------------------- reads
 
     async def list_chats(self, *, limit: int = 30, archived: bool = False,
                          query: str | None = None, kind: str = "all") -> list[Chat]:
@@ -188,17 +163,6 @@ class MongoStore(Store):
         return chats
 
     async def _attach_last_status(self, chats: list[Chat]) -> None:
-        """Fill in the newest message's status for a page of chats.
-
-        The sidebar shows the same ticks as the thread, and this is derived
-        rather than cached on the chat document because a receipt arrives long
-        after the message did -- a stored copy would sit stale showing one grey
-        tick beside a conversation that has been read.
-
-        One aggregation for the whole page rather than a lookup per chat: the
-        sort hits the same (chat_jid, ts) index the message list uses, and
-        $first after it is just the newest row in each group.
-        """
         if not chats:
             return
         jids = [c.chat_jid for c in chats]
@@ -235,8 +199,6 @@ class MongoStore(Store):
             ts["$lte"] = to_ts
         if ts:
             q["ts"] = ts
-        # _id is monotonic per insert, so it breaks the second-resolution tie
-        # the same way id does on the SQL backends.
         cur = self.db.messages.find(q).sort([("ts", -1), ("_id", -1)]).limit(limit)
         return [_msg(d) async for d in cur]
 
@@ -265,9 +227,6 @@ class MongoStore(Store):
                    .limit(limit))
             return [_msg(d) async for d in cur]
         except Exception as exc:
-            # A malformed $text query is an operational error here rather than a
-            # parse error; return nothing rather than failing the tool call, as
-            # the SQLite path does.
             log.debug("mongo search failed: %s", exc)
             return []
 
@@ -293,7 +252,6 @@ class MongoStore(Store):
             return int(row.get("n", 0))
         return 0
 
-    # -------------------------------------------------------------------- kv
 
     async def purge(self) -> dict[str, int]:
         counts = {}

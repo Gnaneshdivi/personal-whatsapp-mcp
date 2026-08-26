@@ -1,9 +1,3 @@
-"""App surface: auth, the OAuth-discovery fix, and the tool list.
-
-Runs the real ASGI app in-process against a temporary SQLite store. No socket is
-opened — with an empty session store the client reports `unpaired` and never
-connects — so this is safe to run anywhere.
-"""
 from __future__ import annotations
 
 import httpx
@@ -14,15 +8,6 @@ from wa_mcp.config import Settings, resolve_storage
 
 @pytest.fixture
 async def client(tmp_path, monkeypatch):
-    """The app, with its lifespan run.
-
-    One fixture: there used to be two, differing only in whether OAuth was on.
-
-    LifespanManager rather than `async with app.router.lifespan_context(...)`:
-    fastmcp's lifespan opens an anyio task group, and a pytest async fixture
-    runs setup and teardown in different tasks, so exiting the cancel scope
-    raises "attempted to exit cancel scope in a different task".
-    """
     monkeypatch.delenv("WA_DATABASE_URL", raising=False)
     settings = Settings(host="127.0.0.1", port=0, auth_token="t0ken")
     storage = resolve_storage("", tmp_path)
@@ -38,11 +23,6 @@ async def client(tmp_path, monkeypatch):
 
 
 def paired(monkeypatch):
-    """Pretend a number is linked.
-
-    Unpaired and paired are different front doors now — the QR for the first,
-    a sign-in form for the second — so a test has to say which it means.
-    """
     from wa_mcp.app import RT
 
     monkeypatch.setattr(RT.wa, "self_jid", "919100828649@s.whatsapp.net")
@@ -61,15 +41,11 @@ async def rpc(c: httpx.AsyncClient, method: str, params: dict | None = None, id_
     return {"raw": r.text, "status": r.status_code}
 
 
-# ------------------------------------------------------------------ auth
-
 async def test_unauthenticated_is_rejected(client):
     assert (await client.get("/api/status")).status_code == 401
 
 
 async def test_query_token_is_accepted(client):
-    """MCP connector dialogs take a URL and nothing else — a header-only
-    scheme cannot be configured in them at all."""
     assert (await client.get("/api/status?k=t0ken")).status_code == 200
 
 
@@ -88,22 +64,14 @@ async def test_wrong_token_is_rejected(client):
     "/register",
 ])
 async def test_discovery_404s_when_oauth_is_off(client, path):
-    """With no OAuth server, a 401 here would send the client off to register
-    with an authorization server that does not exist, and it would report
-    "couldn't register with the sign-in service" — never trying the static
-    token it already had. 404 ends the search."""
     r = await client.get(path)
     assert r.status_code == 404
 
 
 async def test_401_does_not_advertise_bearer_without_oauth(client):
-    """The WWW-Authenticate header is exactly what starts the OAuth dance, and
-    with no OAuth server behind it that dance ends in a dead end."""
     r = await client.get("/api/status")
     assert "www-authenticate" not in {k.lower() for k in r.headers}
 
-
-# ------------------------------------------------------------------ tools
 
 async def test_the_expected_tools_are_registered(client):
     tools = {t["name"] for t in (await rpc(client, "tools/list"))["result"]["tools"]}
@@ -117,8 +85,6 @@ async def test_the_expected_tools_are_registered(client):
 
 
 async def test_read_tools_expose_the_time_window(client):
-    """search and get_messages both support since/until in the store; the old
-    MCP layer dropped both parameters."""
     tools = {t["name"]: t for t in (await rpc(client, "tools/list"))["result"]["tools"]}
     for name in ("wa_search", "wa_get_messages"):
         props = set(tools[name]["inputSchema"]["properties"])
@@ -129,8 +95,6 @@ async def test_send_exposes_reply_to(client):
     props = {t["name"]: t for t in (await rpc(client, "tools/list"))["result"]["tools"]}
     assert "reply_to" in props["wa_send"]["inputSchema"]["properties"]
 
-
-# ------------------------------------------------------------ tool calls
 
 async def test_list_chats_on_an_empty_store(client):
     out = (await rpc(client, "tools/call",
@@ -170,22 +134,11 @@ async def test_unknown_contact_name_names_the_next_step(client):
                       "arguments": {"to": "Nobody", "text": "hi"}}))["result"]
     sc = out["structuredContent"]
     assert sc["ok"] is False
-    # Names both places that were searched, so the answer is not just "no",
-    # and points at the tool that can look rather than leaving it there.
     assert "no chat or contact matching" in sc["error"]
     assert "wa_search" in sc["error"]
 
 
-
-
-# ------------------------------------------------------- the session cookie
-
 async def test_a_browser_trades_the_url_token_for_a_cookie(client):
-    """The URL nobody can remember gets pasted into a notes app.
-
-    And every visit leaves the credential — which is the whole account — in
-    history, in proxy logs, and in the referrer of anything the page loads.
-    """
     r = await client.get("/?k=t0ken", headers={"Accept": "text/html"},
                                 follow_redirects=False)
     assert r.status_code == 303
@@ -196,8 +149,6 @@ async def test_a_browser_trades_the_url_token_for_a_cookie(client):
 
 
 async def test_the_bare_url_works_afterwards(client):
-    """/settings rather than /, which redirects to the pairing page when the
-    test store has no session — a detour that says nothing about the cookie."""
     r = await client.get("/settings", headers={"Accept": "text/html",
                                                       "Cookie": "wa_session=t0ken"})
     assert r.status_code == 200
@@ -210,7 +161,6 @@ async def test_no_cookie_still_means_no_access(client, monkeypatch):
 
 
 async def test_other_query_parameters_survive_the_redirect(client):
-    """/connect?flow=… must not lose the flow id on the way through."""
     r = await client.get("/?k=t0ken&tab=groups",
                                 headers={"Accept": "text/html"},
                                 follow_redirects=False)
@@ -219,8 +169,6 @@ async def test_other_query_parameters_survive_the_redirect(client):
 
 
 async def test_an_api_call_is_never_redirected(client):
-    """Redirecting an MCP client or a curl would break it, and neither keeps
-    cookies anyway. Only GETs that asked for HTML are traded."""
     r = await client.get("/api/status?k=t0ken", follow_redirects=False)
     assert r.status_code == 200
 
@@ -230,11 +178,6 @@ async def test_an_api_call_is_never_redirected(client):
 
 
 async def test_the_cookie_is_secure_behind_a_proxy(client):
-    """Cloudflare terminates TLS, so the hop to us is plain http.
-
-    Reading scope["scheme"] alone would mark the cookie insecure on every
-    tunnelled deployment, which is all of them.
-    """
     r = await client.get("/?k=t0ken",
                                 headers={"Accept": "text/html",
                                          "X-Forwarded-Proto": "https"},
@@ -243,13 +186,10 @@ async def test_the_cookie_is_secure_behind_a_proxy(client):
 
 
 async def test_the_cookie_is_not_secure_on_plain_http(client):
-    """A Secure cookie over http is dropped, and localhost is a normal setup."""
     r = await client.get("/?k=t0ken", headers={"Accept": "text/html"},
                                 follow_redirects=False)
     assert "Secure" not in r.headers["set-cookie"]
 
-
-# ------------------------------------------------------------- signing out
 
 async def test_signing_out_clears_the_cookie(client):
     r = await client.get("/logout", headers={"Cookie": "wa_session=t0ken"})
@@ -260,11 +200,6 @@ async def test_signing_out_clears_the_cookie(client):
 
 
 async def test_the_cleared_cookie_expires_rather_than_being_empty(client, monkeypatch):
-    """An empty cookie still presents itself.
-
-    It would then fail auth on every request instead of falling back to asking
-    for the token, so the browser looks broken rather than signed out.
-    """
     r = await client.get("/logout", headers={"Cookie": "wa_session=t0ken"})
     assert "Max-Age=0" in r.headers["set-cookie"]
 
@@ -274,8 +209,6 @@ async def test_the_cleared_cookie_expires_rather_than_being_empty(client, monkey
 
 
 async def test_logging_out_removes_the_archive(client):
-    """One action, deliberately. Anything less left something behind that the
-    person clicking it believed was gone."""
     from wa_mcp.app import RT
     from wa_mcp.store.base import Message
 
@@ -299,7 +232,6 @@ async def test_the_logged_out_page_says_what_it_did(client):
 
 
 async def test_the_settings_page_offers_one_log_out(client):
-    """One control, and its label says what it does."""
     page = (await client.get("/settings?k=t0ken")).text
     assert 'id="signout"' in page
     assert page.count(">Log out</button>") == 1
@@ -307,15 +239,7 @@ async def test_the_settings_page_offers_one_log_out(client):
     assert "cannot be undone" in page
 
 
-# ------------------------------------------------------ signing out everywhere
-
 async def test_logging_out_expires_issued_credentials(client):
-    """A browser sign-out leaves connectors untouched.
-
-    An OAuth token lasts 30 days and a routine token never expires, so without
-    this the only way to sign a lost client out is to wait — or to change
-    WA_AUTH_TOKEN and restart, which signs out everything including you.
-    """
     from wa_mcp.app import RT
     from wa_mcp.delivery import load, mint, mint_routine
 
@@ -331,10 +255,6 @@ async def test_logging_out_expires_issued_credentials(client):
 
 
 async def test_logging_out_spares_the_configured_token(client):
-    """It comes from the environment and is re-registered on every start.
-
-    Revoking it would lock you out until a restart and do nothing after one.
-    """
     await client.post("/logout?k=t0ken")
     r = await client.get("/api/status?k=t0ken")
     assert r.status_code == 200
@@ -346,7 +266,6 @@ async def test_logging_out_also_clears_this_browser(client):
 
 
 async def test_logging_out_reports_how_many(client):
-    """Silence would leave you wondering whether it did anything."""
     from wa_mcp.delivery import mint
 
     await mint(__import__("wa_mcp.app", fromlist=["RT"]).RT.store,
@@ -355,11 +274,7 @@ async def test_logging_out_reports_how_many(client):
     assert r.json()["revoked"] >= 1
 
 
-# ------------------------------------------------------------- logging out
-
 async def test_logout_clears_the_archive(client):
-    """An unlinked server holding somebody's conversations is stale,
-    unreachable, and still readable by anyone with the file."""
     from wa_mcp.app import RT
     from wa_mcp.store.base import Message
 
@@ -390,7 +305,6 @@ async def test_logout_can_keep_the_archive_if_asked(client):
 
 
 async def test_a_failed_unlink_still_clears_local_state(client, monkeypatch):
-    """Otherwise the data survives a logout the user believes succeeded."""
     from wa_mcp.app import RT
     from wa_mcp.store.base import Message
 
@@ -411,48 +325,30 @@ async def test_a_failed_unlink_still_clears_local_state(client, monkeypatch):
 
 
 async def test_sign_out_confirms_in_the_page_not_in_a_system_dialog(client):
-    """confirm() renders a system dialog showing the domain, styled like a
-    security warning — too much for something that deletes nothing."""
     page = (await client.get("/settings?k=t0ken")).text
-    # The call form, not the word — a comment explaining why it is gone
-    # would otherwise fail this.
     assert 'confirm("' not in page and "confirm('" not in page
     assert "Click again to confirm" in page
 
 
 async def test_logout_is_not_intercepted_by_the_cookie_trade(client):
-    """Issuing a session cookie on the way into the endpoint that revokes it
-    would set and clear it in one click, and the redirect swallows the page
-    saying what was deleted."""
     r = await client.get("/logout?k=t0ken", headers={"Accept": "text/html"},
                          follow_redirects=False)
     assert r.status_code == 200
     assert "Logged out" in r.text
 
 
-# ------------------------------------------------------------- signing in
-
 async def test_a_browser_without_a_token_gets_a_form(client, monkeypatch):
-    """Once a number is linked there IS something to protect.
-
-    A bare 401 is correct and useless — it looks broken, and the person seeing
-    it has no idea the answer is a token from install.
-    """
     paired(monkeypatch)
     r = await client.get("/", headers={"Accept": "text/html"},
                                 follow_redirects=False)
     assert r.status_code == 401
     assert "Sign in" in r.text
     assert 'name="k"' in r.text
-    # And says where to find it. A password box for a password nobody gave
-    # you is not a sign-in page.
     assert "WA_AUTH_TOKEN" in r.text or "printed when the server starts" in r.text
-    # And what it gets you, so the next step is not a guess either.
     assert "MCP client" in r.text
 
 
 async def test_the_form_posts_back_to_the_path_it_was_asked_for(client, monkeypatch):
-    """So signing in from /settings lands on /settings, not the chat list."""
     paired(monkeypatch)
     r = await client.get("/settings", headers={"Accept": "text/html"},
                                 follow_redirects=False)
@@ -460,8 +356,6 @@ async def test_the_form_posts_back_to_the_path_it_was_asked_for(client, monkeypa
 
 
 async def test_the_form_reuses_the_token_path(client):
-    """It submits ?k=, which the middleware already trades for a cookie —
-    rather than adding a second way to authenticate."""
     r = await client.get("/?k=t0ken", headers={"Accept": "text/html"},
                                 follow_redirects=False)
     assert r.status_code == 303
@@ -469,33 +363,25 @@ async def test_the_form_reuses_the_token_path(client):
 
 
 async def test_an_api_client_still_gets_a_plain_401(client):
-    """A form would be nonsense to curl or an MCP client."""
     r = await client.get("/api/status", follow_redirects=False)
     assert r.status_code == 401
     assert "Sign in" not in r.text
 
 
 async def test_the_sign_in_page_never_shows_the_qr_once_paired(client, monkeypatch):
-    """Before pairing the QR is the front door. After it, there is an account
-    behind that door and the QR would be a second way in."""
     paired(monkeypatch)
     r = await client.get("/", headers={"Accept": "text/html"},
                                 follow_redirects=False)
     assert "<svg" not in r.text and "qr" not in r.text.lower()
 
 
-# --------------------------------------------------- getting the MCP URL
-
 async def test_the_connector_url_is_available_in_the_app(client):
-    """It used to exist only in a line of the startup log — no help to anyone
-    who closed that terminal, or runs this as a service."""
     d = (await client.get("/api/connect-info?k=t0ken")).json()
     assert d["mcp_url"].endswith("/mcp?k=t0ken")
     assert d["needs_token"] is True
 
 
 async def test_the_connector_url_needs_a_signed_in_session(client):
-    """It contains the token, which is the whole account."""
     r = await client.get("/api/connect-info")
     assert r.status_code == 401
 
@@ -507,14 +393,7 @@ async def test_the_settings_page_shows_it(client):
     assert "Connect an AI client" in page
 
 
-# ------------------------------------------------- the QR is the front door
-
 def offer_qr(monkeypatch):
-    """A code is waiting, without opening a socket.
-
-    /connect calls pair() for real, which reaches WhatsApp and then polls for
-    twenty seconds. A test that forgets this does not fail — it hangs.
-    """
     from wa_mcp.app import RT
 
     async def no_op():
@@ -525,9 +404,6 @@ def offer_qr(monkeypatch):
 
 
 async def test_an_unpaired_server_shows_the_qr_not_a_token_form(client, monkeypatch):
-    """Nothing is linked, so there is nothing to protect: no account, no
-    messages, no settings. Asking for a token first guards an empty server and
-    stops anyone getting started."""
     offer_qr(monkeypatch)
     r = await client.get("/", headers={"Accept": "text/html"},
                          follow_redirects=False)
@@ -544,25 +420,16 @@ async def test_the_connect_page_is_reachable_unpaired_without_a_token(client, mo
 
 
 async def test_scanning_signs_the_browser_in(client, monkeypatch):
-    """The whole flow: shown a QR, scans, comes back signed in.
-
-    Whoever completed the scan proved they hold the phone, which is a better
-    claim than a token pasted from a log. Without this they land on a sign-in
-    form seconds after linking their own account.
-    """
     offer_qr(monkeypatch)
 
-    # 1. unpaired: the QR, and a ticket to come back with
     first = await client.get("/connect", headers={"Accept": "text/html"})
     assert first.status_code == 200
     cookie = first.headers.get("set-cookie", "")
     assert "wa_pairing=" in cookie
     ticket = cookie.split("wa_pairing=")[1].split(";")[0]
 
-    # 2. they scan
     paired(monkeypatch)
 
-    # 3. back with the ticket, and now they are signed in
     second = await client.get("/connect", headers={"Accept": "text/html",
                                                    "Cookie": f"wa_pairing={ticket}"},
                               follow_redirects=False)
@@ -571,8 +438,6 @@ async def test_scanning_signs_the_browser_in(client, monkeypatch):
 
 
 async def test_a_ticket_is_not_a_session(client, monkeypatch):
-    """It reaches /connect and nothing else, so a browser that watched the QR
-    without scanning cannot walk into a server somebody else then paired."""
     offer_qr(monkeypatch)
     first = await client.get("/connect", headers={"Accept": "text/html"})
     ticket = first.headers["set-cookie"].split("wa_pairing=")[1].split(";")[0]
@@ -589,7 +454,6 @@ async def test_a_ticket_is_not_a_session(client, monkeypatch):
 
 
 async def test_a_stale_ticket_gets_nothing(client, monkeypatch):
-    """Single use: the ticket is spent the moment it becomes a session."""
     paired(monkeypatch)
     r = await client.get("/connect", headers={"Accept": "text/html",
                                               "Cookie": "wa_pairing=made-up"},
@@ -598,8 +462,6 @@ async def test_a_stale_ticket_gets_nothing(client, monkeypatch):
 
 
 async def test_an_api_client_is_never_let_through_unpaired(client, monkeypatch):
-    """The open door is for a browser about to scan, not for anything that
-    wants the tools."""
     offer_qr(monkeypatch)
     r = await client.post("/mcp", json={"jsonrpc": "2.0", "id": 1,
                                         "method": "tools/list"},
@@ -611,15 +473,12 @@ async def test_an_api_client_is_never_let_through_unpaired(client, monkeypatch):
 
 
 async def test_the_profile_tool_is_registered(client):
-    """Devices, verified name and photo come from get_user_info, which nothing
-    used before — the contact book only ever held the name you saved."""
     out = await rpc(client, "tools/list")
     names = [t["name"] for t in out["result"]["tools"]]
     assert "wa_profile" in names
 
 
 async def test_the_ui_can_read_a_contact_profile(client, monkeypatch):
-    """The header panel needs it over HTTP, not only as an MCP tool."""
     from wa_mcp.app import RT
 
     async def fake(jid):

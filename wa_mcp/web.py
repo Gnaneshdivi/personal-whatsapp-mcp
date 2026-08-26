@@ -1,9 +1,3 @@
-"""The browser UI: chat list, conversation, pairing, live sync progress.
-
-Server-rendered HTML and one EventSource. No build step, because a
-`node_modules` in the install path of a `pip install` tool is the difference
-between someone trying it and closing the tab.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -87,18 +81,6 @@ def _esc(s) -> str:
 
 
 def qr_svg(payload: str) -> str:
-    """Render a pairing code as a responsive inline SVG.
-
-    `omitsize=True` is the whole trick. segno's default emits
-    `width="690" height="690"` and NO viewBox, so CSS `width` resizes the
-    element box while the drawing stays at its intrinsic 690px and spills out
-    of whatever contains it. With a viewBox and no fixed dimensions the code
-    scales to its container, which is what every other image on the web does.
-
-    border=4 is the spec's minimum quiet zone. At 3 the finder patterns sit too
-    close to the edge and some scanners refuse the code — it looks fine and
-    simply will not read.
-    """
     svg = segno.make_qr(payload).svg_inline(
         scale=10, border=4, dark="#000", light="#fff", omitsize=True)
     return svg if isinstance(svg, str) else svg.decode()
@@ -133,23 +115,14 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
     async def connect(request):
         st = rt.status()
         if st["number"]:
-            # Straight into the app. A "Connected" screen with a link is a step
-            # nobody wants after they have already succeeded.
-            #
-            # And with the session cookie: whoever completed the scan proved
-            # they hold the phone, which is a better claim than a token pasted
-            # from a log. Without this they would land on a sign-in form
-            # seconds after linking their own account.
             headers = {"location": f"/{_q(request)}"}
             ticket = ""
             for part in request.headers.get("cookie", "").split(";"):
                 if part.strip().startswith("wa_pairing="):
                     ticket = part.strip()[11:]
-            # Only the browser that was shown the QR gets the session. Anyone
-            # else reaching a paired server still has to present the token.
             if (settings.auth_token and ticket
                     and ticket == getattr(rt, "pair_ticket", None)):
-                rt.pair_ticket = None      # single use
+                rt.pair_ticket = None
                 secure = "; Secure" if (
                     request.url.scheme == "https"
                     or request.headers.get("x-forwarded-proto", "").startswith("https")
@@ -163,8 +136,6 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
             try:
                 await rt.wa.pair()
             except Exception as exc:
-                # Show it. Swallowing this rendered a spinner forever while the
-                # real cause was a one-line install command.
                 log.error("pairing could not start: %s", exc)
                 return HTMLResponse(_page("Cannot pair", f"""
 <div style="display:grid;place-items:center;height:100vh;padding:24px">
@@ -221,10 +192,7 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         for c, name in found:
             d = c.public(); d["name"] = name
             out.append(d)
-        # One query, two lists — the same shape WhatsApp answers with.
         messages = await find_messages(rt, query=query, limit=25) if query else []
-        # Three lists, like WhatsApp: who you talk to, who you could talk to,
-        # and where it was said.
         contacts = [{"chat_jid": j, "name": n}
                     for j, n in await find_contacts(rt, query=query, limit=15)] \
             if query else []
@@ -232,19 +200,13 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
                              "messages": messages})
 
     async def messages_api(request):
-        """A page of history, oldest-first for direct rendering.
-
-        before_id pages BACKWARDS from a known message rather than by offset:
-        rows arrive continuously, and an offset would silently skip or repeat
-        messages as new ones land above the window.
-        """
         jid = request.path_params["jid"]
         q = request.query_params
         msgs = await rt.store.get_messages(
             jid, limit=int(q.get("limit", 40)), before_id=q.get("before") or None)
         chat = await rt.store.get_chat(jid)
         out = []
-        for m in reversed(msgs):                 # store returns newest-first
+        for m in reversed(msgs):
             d = m.public()
             d["sender_name"] = (rt.contacts.display_name(
                 m.sender_jid or "", push_name=m.sender_name)
@@ -277,23 +239,6 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         return JSONResponse(rt.status())
 
     async def sign_out(request):
-        """Log out completely: unlink WhatsApp and delete everything.
-
-        One action, deliberately. Anything less left something behind that the
-        person clicking it believed was gone — connectors kept full access for
-        thirty days, and the message archive stayed on disk for an account the
-        server could no longer reach.
-
-        IRREVERSIBLE. WhatsApp sends history exactly once, at pair time, so the
-        messages deleted here cannot be recovered by pairing again; the archive
-        starts empty.
-
-        WA_AUTH_TOKEN survives, because it comes from the environment and is
-        re-registered on every start. Revoking it would lock you out until a
-        restart and do nothing after one.
-        """
-        # Credentials first: if the unlink or the purge fails halfway, the
-        # things that grant access are already dead rather than still live.
         keep = f"token.{settings.auth_token}" if settings.auth_token else ""
         revoked = 0
         for prefix in ("token.",):
@@ -307,8 +252,6 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
         try:
             result = await rt.wa.logout(purge=True)
         except Exception as exc:
-            # Never connected, or the socket is already gone. The data still
-            # has to go, or a logout the user watched succeed leaves it there.
             log.warning("unlink failed, purging anyway: %s", exc)
             result = {"unlink_error": str(exc),
                       "deleted": await rt.store.purge()}
@@ -337,7 +280,6 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
             headers=headers)
 
     async def profile_api(request):
-        """A contact's published details, for the header panel."""
         try:
             return JSONResponse({"ok": True,
                                  **await rt.wa.profile(request.path_params["jid"])})
@@ -345,13 +287,6 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=502)
 
     async def connect_info(request):
-        """The URL to paste into an AI client, assembled here.
-
-        Before this the only place it existed was a line in the server's own
-        startup log, so anyone who had closed that terminal — or was running it
-        as a service — had nowhere to look. You are signed in by the time you
-        can read this, so it is safe to show the token.
-        """
         base = settings.public_base_url or f"http://{settings.host}:{settings.port}"
         token = settings.auth_token
         return JSONResponse({
@@ -373,10 +308,6 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
             raw["model"]["api_key"] = cur.model.api_key
         merged = TriggerSettings.from_dict(raw)
         await rt.trigger.save(merged)
-        # Two independent things stop a reply: the settings not being usable,
-        # and the sync gate still being closed. Only the first had a reason
-        # attached, so a perfectly good config saved during a sync reported
-        # "not firing" with nothing after the colon.
         ok, why = merged.ready()
         synced = rt.status()["ready"]
         if not ok:
@@ -389,7 +320,6 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
                              "blocked_by": blocked})
 
     async def media(request):
-        """Serve an attachment, fetching and caching it on first request."""
         mid = request.path_params["mid"]
         row = await rt.store.get_message(mid)
         if row is None or not row.media_meta:
@@ -414,12 +344,6 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
                         headers={"Cache-Control": "private, max-age=86400"})
 
     async def avatar(request):
-        """Profile picture for a chat, fetched once and cached on disk.
-
-        A 204 is cached like a hit. Most chats have no picture, and asking
-        WhatsApp again on every page load for an answer that will not change
-        is both slow and the sort of chatter that draws rate limiting.
-        """
         jid = request.path_params["jid"]
         cache = data_dir() / "avatars"
         cache.mkdir(parents=True, exist_ok=True)
@@ -458,23 +382,16 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
                         headers={"Cache-Control": "private, max-age=86400"})
 
     async def events(request):
-        """SSE. Pushes status on a timer plus anything the runtime emits."""
         q = rt.subscribe()
 
         async def stream():
             try:
-                # Status first, before waiting on anything, so a freshly loaded
-                # page paints the real state immediately instead of showing the
-                # server-rendered "syncing" placeholder until the first tick.
                 yield f"event: status\ndata: {json.dumps(rt.status())}\n\n"
                 last_status = time.monotonic()
                 while True:
                     try:
                         item = await asyncio.wait_for(q.get(), timeout=2.0)
                         yield f"event: wa\ndata: {json.dumps(item)}\n\n"
-                        # Drain the rest of the burst. Receipts arrive in
-                        # groups; emitting one per two-second tick would take
-                        # half a minute to tick a dozen messages.
                         while not q.empty():
                             yield f"event: wa\ndata: {json.dumps(q.get_nowait())}\n\n"
                     except asyncio.TimeoutError:
@@ -485,10 +402,6 @@ def mount_web(app, rt: Runtime, settings: Settings) -> None:
             finally:
                 rt.unsubscribe(q)
 
-        # StreamingResponse, not Response. A plain Response tries to use the
-        # generator as a body and 500s — which is what this endpoint did from
-        # the day it was written, so no live update ever reached the browser
-        # and the UI appeared to work only because of its 20-second poll.
         return StreamingResponse(stream(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-store",
                                           "X-Accel-Buffering": "no"})

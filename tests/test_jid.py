@@ -1,11 +1,9 @@
-"""JID normalisation — the thing that stops one conversation becoming three."""
 from __future__ import annotations
 
 from wa_mcp.whatsapp import jid as J
 
 
 def test_device_suffix_is_stripped():
-    """Live data: the account's own JID is 919100828649:7@s.whatsapp.net."""
     assert J.normalise("919100828649:7@s.whatsapp.net") == "919100828649@s.whatsapp.net"
     assert J.normalise("919100828649@s.whatsapp.net") == "919100828649@s.whatsapp.net"
 
@@ -35,13 +33,11 @@ def test_ignorable_survives_a_device_suffix():
 
 def test_phone_extraction():
     assert J.phone("919812345678:7@s.whatsapp.net") == "919812345678"
-    assert J.phone("207696196305131@lid") == ""      # LIDs carry no number
+    assert J.phone("207696196305131@lid") == ""
     assert J.phone("1234-5678@g.us") == ""
 
 
 def test_modern_all_digit_group_ids_are_not_phone_numbers():
-    """120363228197508350@g.us is all digits; isdigit() alone hands it back as
-    a phone number and the chat list shows 18 digits instead of a name."""
     assert J.phone("120363228197508350@g.us") == ""
     assert J.phone("919980982358-1479370608@g.us") == ""
 
@@ -62,8 +58,6 @@ def test_from_obj_renders_a_protobuf_jid():
     assert J.from_obj(FakeJID()) == "919100828649@s.whatsapp.net"
     assert J.from_obj(None) == ""
 
-
-# ---------------------------------------------------------------- LID resolver
 
 async def test_resolver_canonicalises_a_lid():
     def lookup(_lid):
@@ -93,7 +87,6 @@ async def test_resolver_caches_so_ingest_does_not_hammer_go():
 
 
 async def test_unresolvable_lid_stays_a_stable_identifier():
-    """Better a coherent conversation under a LID than a lost message."""
     def lookup(_lid):
         raise RuntimeError("no mapping")
 
@@ -109,18 +102,7 @@ async def test_non_lid_never_hits_the_resolver():
     assert await r.canonical("919812345678@s.whatsapp.net") == "919812345678@s.whatsapp.net"
 
 
-# ------------------------------------------ device JIDs are NOT chat JIDs
-
 def test_normalise_strips_the_device_number_and_that_is_the_point():
-    """For a chat key the suffix is noise — it splits one conversation into
-    several. For a DEVICE lookup it is essential: whatsmeow stores the linked
-    device as 919100828649:9 and finds nothing under 919100828649, returns nil,
-    and NewClient dereferences it — a Go panic that kills the process, because
-    Python cannot catch one.
-
-    This test exists to make that asymmetry impossible to forget: normalise()
-    is lossy by design, so a device JID must never travel through it.
-    """
     device = "919100828649:9@s.whatsapp.net"
     assert J.normalise(device) == "919100828649@s.whatsapp.net"
-    assert J.normalise(device) != device        # the device number is gone
+    assert J.normalise(device) != device

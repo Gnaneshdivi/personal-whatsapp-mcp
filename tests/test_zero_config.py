@@ -1,13 +1,3 @@
-"""Running it with no configuration at all.
-
-The goal is that someone clones this, runs it, and points Claude at it. Every
-decision they have to make first is a reason not to bother — but the moment a
-tunnel is involved the URL is public, and open there means whoever finds it
-reads every message and can send as you.
-
-So: loopback is open, anything reachable gets a token whether or not the user
-thought about it, and there is one explicit way to say you meant it.
-"""
 from __future__ import annotations
 
 import httpx
@@ -35,8 +25,6 @@ async def _app(monkeypatch, tmp_path, **env):
 
 
 async def test_loopback_with_no_token_is_open(monkeypatch, tmp_path):
-    """Only this machine can reach it, so a credential buys nothing and costs
-    a decision."""
     mgr, _ = await _app(monkeypatch, tmp_path)
     async with mgr as m:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=m.app),
@@ -48,7 +36,6 @@ async def test_loopback_with_no_token_is_open(monkeypatch, tmp_path):
 
 
 async def test_a_public_base_url_gets_a_token_even_on_loopback(monkeypatch, tmp_path):
-    """A tunnel points at loopback. The host says local; the URL is not."""
     mgr, settings = await _app(monkeypatch, tmp_path,
                                PUBLIC_BASE_URL="https://x.ngrok.io")
     async with mgr as m:
@@ -73,8 +60,6 @@ async def test_binding_to_all_interfaces_gets_a_token(monkeypatch, tmp_path):
 
 
 async def test_open_can_be_asked_for_explicitly(monkeypatch, tmp_path):
-    """Someone on a LAN they trust should not be forced into a credential —
-    but they have to say so."""
     mgr, settings = await _app(monkeypatch, tmp_path, _host="0.0.0.0",
                                WA_ALLOW_OPEN="1")
     async with mgr as m:
@@ -100,12 +85,6 @@ async def test_a_configured_token_is_never_replaced(monkeypatch, tmp_path):
 
 
 async def test_the_generated_token_is_kept_in_the_store(tmp_path, monkeypatch):
-    """In the database, not a file beside it.
-
-    Everything else that survives a restart lives there, it moves with the
-    deployment when the store is Postgres, and a stray credential file next to
-    the data is one more thing to find and protect.
-    """
     monkeypatch.delenv("WA_DATABASE_URL", raising=False)
     from wa_mcp.app import TOKEN_KEY, _stored_token
     from wa_mcp.runtime import build_store
@@ -126,8 +105,6 @@ async def test_the_generated_token_is_kept_in_the_store(tmp_path, monkeypatch):
 
 async def test_a_tunnelled_server_has_a_token_by_the_time_it_serves(
         monkeypatch, tmp_path):
-    """It is created during startup, after the store opens. Nothing may be
-    served before that happens."""
     mgr, settings = await _app(monkeypatch, tmp_path,
                                PUBLIC_BASE_URL="https://x.ngrok.io")
     async with mgr as m:

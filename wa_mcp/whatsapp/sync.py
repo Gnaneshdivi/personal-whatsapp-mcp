@@ -1,24 +1,3 @@
-"""Sync state — the WhatsApp Web progress bar, and the gate on auto-reply.
-
-Two jobs, and the second is the one that matters.
-
-**Progress.** Reconnecting replays everything that happened while the socket was
-down, and on a first pair it replays months. Users need to see that happening or
-they conclude the app is broken. The events carry enough to say so honestly:
-
-    OfflineSyncPreview    Total, Message, Notifications, Receipts
-    HistorySync           syncType, progress, chunkOrder
-    OfflineSyncCompleted  Count
-
-**The gate.** History sync delivers OLD messages through the same event path as
-live ones. With the trigger armed during sync, the first thing a fresh install
-does is auto-reply to weeks of conversations, to everyone, at once. So `ready`
-is false until sync settles, and the reply engine refuses to fire before then.
-
-Reaching READY is also bounded by a deadline. Some accounts never emit
-OfflineSyncCompleted — nothing errors, the event simply never arrives — and a
-gate that waits forever silently disables the whole feature.
-"""
 from __future__ import annotations
 
 import time
@@ -35,17 +14,15 @@ class Phase(str, Enum):
     LOGGED_OUT = "logged_out"
 
 
-# How long to wait for OfflineSyncCompleted before declaring ready anyway.
-# Generous: a first pair on a busy account genuinely takes minutes.
 SETTLE_SECONDS = 90.0
 
 
 @dataclass
 class SyncState:
     phase: Phase = Phase.UNPAIRED
-    total: int = 0            # from OfflineSyncPreview
-    done: int = 0             # events seen since sync began
-    history_type: str = ""    # INITIAL_BOOTSTRAP | RECENT | FULL | …
+    total: int = 0
+    done: int = 0
+    history_type: str = ""
     history_percent: float = 0.0
     chats_synced: int = 0
     started_at: float = 0.0
@@ -53,13 +30,6 @@ class SyncState:
 
     @property
     def percent(self) -> float:
-        """Best available estimate, 0-100.
-
-        Prefers the offline-queue ratio because it has a real denominator, and
-        falls back to whatsmeow's own history progress. Never reports 100 before
-        the phase actually settles — a bar that sits full while work continues
-        is worse than one that sits at 90.
-        """
         if self.phase is Phase.READY:
             return 100.0
         if self.total > 0:
@@ -89,12 +59,10 @@ class SyncState:
 
 @dataclass
 class SyncTracker:
-    """Folds sync events into one state. No I/O, so it is trivially testable."""
 
     state: SyncState = field(default_factory=SyncState)
     _clock: object = time.monotonic
 
-    # ------------------------------------------------------------- lifecycle
 
     def unpaired(self) -> None:
         self.state = SyncState(phase=Phase.UNPAIRED)
@@ -109,14 +77,12 @@ class SyncTracker:
         self.state = SyncState(phase=Phase.LOGGED_OUT, detail="device unlinked")
 
     def connected(self) -> None:
-        """Authenticated. Sync may or may not follow, so start the clock."""
         if self.state.phase in (Phase.READY, Phase.SYNCING):
             return
         self.state.phase = Phase.SYNCING
         self.state.started_at = self.state.started_at or self._now()
         self.state.detail = "waiting for the server"
 
-    # ---------------------------------------------------------------- events
 
     def offline_preview(self, total: int, **parts: int) -> None:
         self.state.phase = Phase.SYNCING
@@ -143,15 +109,8 @@ class SyncTracker:
         self.state.done = max(self.state.done, int(count or 0))
         self._settle("offline queue drained")
 
-    # ------------------------------------------------------------- the gate
 
     def tick(self) -> None:
-        """Called periodically. Settles a sync that never announced completion.
-
-        Some accounts never emit OfflineSyncCompleted at all. Without this the
-        gate stays closed forever and auto-reply silently never fires — a bug
-        that presents as "the product does not work" with nothing in the logs.
-        """
         if self.state.phase is Phase.SYNCING and self.state.started_at:
             if self._now() - self.state.started_at > SETTLE_SECONDS:
                 self._settle("settled on timeout")

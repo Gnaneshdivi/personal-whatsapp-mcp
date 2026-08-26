@@ -1,26 +1,3 @@
-"""Delivery tokens: one reply, one chat, a few minutes.
-
-Fire-and-forget hands an untrusted message to an agent that holds this
-connector. That agent can reach every conversation on the account, and the
-message it is reasoning about was written by anyone who knows the number. The
-instruction telling it to reply only in that chat is a sentence in a prompt —
-it raises the cost of an attack without being a boundary, and prompt injection
-is precisely the technique for talking a model out of its instructions.
-
-So the boundary is not asked of the model. The webhook is given a token minted
-for that one delivery, and this server refuses anything outside it:
-
-    full token      all 22 tools, every chat, no expiry   (your own connector)
-    delivery token  send/typing only, one chat, minutes   (per inbound message)
-
-An agent that has been completely talked over can then do exactly one thing:
-reply in the conversation that triggered it. Reading other chats, listing
-groups, downloading media and messaging a different number are not refusals it
-has to be persuaded into — they are not available.
-
-The decision is a pure function so it can be tested without a socket, an agent
-or a live account.
-"""
 from __future__ import annotations
 
 import logging
@@ -31,16 +8,11 @@ from .whatsapp import jid as J
 
 log = logging.getLogger(__name__)
 
-# Everything a reply legitimately needs, and nothing else. Each of these takes
-# the destination as `to`, which is what makes confining them to one chat
-# checkable rather than a matter of trust.
 REPLY_TOOLS = ("wa_send", "wa_send_media", "wa_typing")
 
-# The MCP handshake. Refusing these would stop the client connecting at all.
 PROTOCOL_METHODS = ("initialize", "ping", "tools/list", "resources/list",
                     "prompts/list", "notifications/initialized")
 
-# Named for what it holds, not for the scheme that used to issue it.
 KV_PREFIX = "token."
 
 
@@ -49,12 +21,6 @@ def _kv(token: str) -> str:
 
 
 async def mint(store, chat_jid: str, ttl_seconds: int) -> str:
-    """A token good for replying to one chat, until it expires.
-
-    Written through the same kv the bearer token is checked against, so there
-    is one code path deciding what counts as a valid token — a second such
-    path is how one of them ends up more permissive.
-    """
     token = secrets.token_urlsafe(32)
     await store.put_kv(_kv(token), {
         "token": token,
@@ -68,19 +34,6 @@ async def mint(store, chat_jid: str, ttl_seconds: int) -> str:
 
 
 async def mint_routine(store) -> str:
-    """A standing credential for a routine's connector.
-
-    A routine authenticates with whatever token its connector was configured
-    with, once, at setup — it cannot pick up the per-delivery token from its
-    own input. So a routine holding an ordinary token is unrestricted, and the
-    delivery token in the payload protects nothing.
-
-    This is the shape that survives that: the connector's own token can call
-    only the reply tools, and only when the call carries a reply_token from a
-    live delivery. An injected "just send it without the token" is refused
-    because the token is what authorises sending at all; an injected "send it
-    to this other number" is refused because the reply_token names the chat.
-    """
     token = secrets.token_urlsafe(32)
     await store.put_kv(_kv(token), {
         "token": token,
@@ -88,13 +41,12 @@ async def mint_routine(store) -> str:
         "scopes": ["reply"],
         "subject": "routine",
         "routine": True,
-        "expires_at": None,          # standing; revoke by deleting the row
+        "expires_at": None,
     })
     return token
 
 
 async def load(store, token: str) -> dict | None:
-    """The stored record, or None when it is unknown or expired."""
     if not token:
         return None
     raw = await store.get_kv(_kv(token))
@@ -108,14 +60,9 @@ async def load(store, token: str) -> dict | None:
 
 def refusal(record: dict | None, method: str, tool: str,
             arguments: dict | None, delivery: dict | None = None) -> str | None:
-    """Why this call is not allowed, or None if it is.
-
-    `record` is the token's stored form. Anything without `delivery_chat` is an
-    ordinary full-access token and is never restricted here.
-    """
     routine = bool(record and record.get("routine"))
     if not record or not (record.get("delivery_chat") or routine):
-        return None                      # a full token; not our business
+        return None
 
     if method in PROTOCOL_METHODS:
         return None
@@ -127,9 +74,6 @@ def refusal(record: dict | None, method: str, tool: str,
                 f"in the conversation it was issued for")
 
     if routine:
-        # The connector's own token authorises nothing on its own. Sending
-        # requires proof that a real message arrived, and that proof names the
-        # chat, so neither "send without it" nor "send it elsewhere" works.
         if not delivery:
             return ("this call needs a live reply_token — pass the one from "
                     "the message payload")
@@ -140,25 +84,11 @@ def refusal(record: dict | None, method: str, tool: str,
     if not target:
         return "no destination given"
     if target != allowed:
-        # The whole point. An injected "message this to 9199..." arrives here
-        # as an ordinary, well-formed call — the only thing that distinguishes
-        # it from a legitimate reply is the destination.
         return f"this token may only reply to {allowed}, not {target}"
     return None
 
 
 class Scope:
-    """ASGI enforcement for /mcp.
-
-    One gate rather than a check inside each of 22 tools: a tool added later
-    without the check would silently be reachable, and a security boundary that
-    depends on remembering to opt in is not one.
-
-    The body has to be read to see which tool is being called, so it is
-    buffered and replayed downstream. MCP bodies are a JSON-RPC envelope, not
-    uploads, so this is bounded by MAX_BODY rather than being a way to make the
-    server hold anything large.
-    """
 
     MAX_BODY = 256 * 1024
 
@@ -173,15 +103,11 @@ class Scope:
         auth = headers.get("authorization", "")
         token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
         record = await load(self.rt.store, token) if token else None
-        # Debug, not info: a routine run makes ~18 calls, and at info that
-        # buries everything else. A connector that cannot see the tools looks
-        # identical to one that never connected, so the line earns its place —
-        # just not on every request. Refusals below are logged loudly.
         log.debug("mcp call: subject=%s scoped=%s",
                   (record or {}).get("subject", "unknown-or-rejected"),
                   bool(record and (record.get("delivery_chat") or record.get("routine"))))
         if not record or not (record.get("delivery_chat") or record.get("routine")):
-            return await self.app(scope, receive, send)   # full token, or none
+            return await self.app(scope, receive, send)
 
         body, more, size = b"", True, 0
         buffered = []
@@ -196,9 +122,6 @@ class Scope:
 
         why = await self._check(body, record)
         if why:
-            # The actionable case: something asked for more than it may have.
-            # Either a misconfigured routine or an injection that got through
-            # to the tool call, and both are worth seeing without debug on.
             log.warning("refused %s: %s", record.get("subject", "?"), why)
             return await _error(send, why)
 
@@ -219,15 +142,12 @@ class Scope:
         try:
             payload = json.loads(body or b"{}")
         except Exception:
-            return None                  # not ours to reject; let MCP answer
-        # Batched calls are a list; every one of them has to pass.
+            return None
         for call in (payload if isinstance(payload, list) else [payload]):
             if not isinstance(call, dict):
                 continue
             params = call.get("params") or {}
             args = params.get("arguments") or {}
-            # A routine proves the call belongs to a real inbound message by
-            # carrying the token that message was delivered with.
             delivery = None
             if record.get("routine") and args.get("reply_token"):
                 delivery = await load(self.rt.store, str(args["reply_token"]))

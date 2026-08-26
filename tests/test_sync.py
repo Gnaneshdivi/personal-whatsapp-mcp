@@ -1,4 +1,3 @@
-"""Sync state — the progress bar, and the gate that stops mass auto-replies."""
 from __future__ import annotations
 
 from wa_mcp.whatsapp.sync import Phase, SyncTracker
@@ -18,7 +17,6 @@ def test_a_fresh_install_is_not_ready():
 
 
 def test_the_gate_stays_shut_during_sync():
-    """The whole point: no auto-reply while old messages are replaying."""
     t = tracker()
     t.connecting()
     t.connected()
@@ -27,10 +25,10 @@ def test_the_gate_stays_shut_during_sync():
     assert t.state.ready is False
 
     t.saw_event(600)
-    assert t.state.ready is False        # halfway, still shut
+    assert t.state.ready is False
 
     t.offline_completed(1200)
-    assert t.state.ready is True         # only now
+    assert t.state.ready is True
 
 
 def test_percent_tracks_the_offline_queue():
@@ -44,7 +42,6 @@ def test_percent_tracks_the_offline_queue():
 
 
 def test_percent_never_shows_100_before_it_is_done():
-    """A full bar with work still running reads as a hang."""
     t = tracker()
     t.connected()
     t.offline_preview(total=10)
@@ -56,7 +53,6 @@ def test_percent_never_shows_100_before_it_is_done():
 
 
 def test_history_progress_is_the_fallback_denominator():
-    """A first pair has no offline preview — only HistorySync progress."""
     t = tracker()
     t.connected()
     t.history_chunk("INITIAL_BOOTSTRAP", progress=40.0, conversations=12)
@@ -69,7 +65,6 @@ def test_history_progress_is_the_fallback_denominator():
 
 
 def test_offline_queue_wins_over_history_progress():
-    """It has a real denominator; history progress is whatsmeow's estimate."""
     t = tracker()
     t.connected()
     t.offline_preview(total=100)
@@ -79,8 +74,6 @@ def test_offline_queue_wins_over_history_progress():
 
 
 def test_sync_that_never_completes_still_settles():
-    """Some accounts never emit OfflineSyncCompleted. A gate that waits forever
-    disables auto-reply with nothing in the logs to explain it."""
     now = [1000.0]
     t = tracker(clock=lambda: now[0])
     t.connecting()
@@ -91,7 +84,7 @@ def test_sync_that_never_completes_still_settles():
     t.tick()
     assert t.state.ready is False
 
-    now[0] += 120                      # past SETTLE_SECONDS
+    now[0] += 120
     t.tick()
     assert t.state.ready is True
     assert "timeout" in t.state.detail
@@ -125,7 +118,6 @@ def test_logout_reopens_the_gate():
 
 
 def test_reconnect_does_not_reset_a_ready_session():
-    """whatsmeow re-authenticates on its own; that is not a resync."""
     t = tracker()
     t.connected()
     t.offline_completed(0)

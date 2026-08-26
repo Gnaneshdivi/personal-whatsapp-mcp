@@ -1,16 +1,3 @@
-"""Periodic digests of what came in.
-
-The point is not to read everything — it is to not miss the few things that
-matter. So the digest is built around the "important" list from settings: those
-are called out first and by name, and the rest is a short account of what else
-happened.
-
-Two rules keep a digest worth reading. Nothing is sent when nothing happened,
-because one that arrives saying "no activity" teaches you to ignore the ones
-that do not. And the window is exactly the time since the last digest, so
-messages are neither repeated nor skipped when an interval is changed or the
-process restarts mid-cycle.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -62,25 +49,19 @@ the reason this summary exists, and missing one is the only real failure:
 
 
 def destination(s, self_jid: str) -> str:
-    """Where a digest goes. Same vocabulary as alerts."""
     route = s.summary.route
     if route == "me":
         return J.normalise(self_jid or "")
     if route == "number":
         return J.to_jid(s.summary.jid) if s.summary.jid else ""
     if route == "chat":
-        # No single chat makes sense for a digest spanning many, so this is
-        # treated as the owner's own thread rather than silently doing nothing.
         return J.normalise(self_jid or "")
     return ""
 
 
-# Bounds, so one noisy group cannot drown the summary — or bankrupt it. A
-# single association group produced 89 messages of forwarded ads and market
-# tips in one window, which is both the bulk of the cost and none of the value.
-PER_CHAT = 12          # newest N inbound messages from any one conversation
-PER_MESSAGE = 300      # a forwarded brochure says nothing more in its 900th char
-TOTAL_CHARS = 12000    # ceiling on the whole prompt body
+PER_CHAT = 12
+PER_MESSAGE = 300
+TOTAL_CHARS = 12000
 
 
 def _trim(text: str) -> str:
@@ -89,16 +70,6 @@ def _trim(text: str) -> str:
 
 
 async def addressed_to_me(rt, m, self_user: str) -> bool:
-    """Whether a group message is aimed at the owner rather than the room.
-
-    In a group, almost nothing is for you. A summary that treats every message
-    as a possible request produces "someone is asking you to check the CCTV
-    footage" out of neighbours talking among themselves — which is worse than
-    no summary, because you act on it.
-
-    Two things make it yours: being mentioned, which WhatsApp writes into the
-    text as @<number>, or someone replying to something you said.
-    """
     if self_user and f"@{self_user}" in (m.text or ""):
         return True
     if m.quoted_id:
@@ -109,12 +80,6 @@ async def addressed_to_me(rt, m, self_user: str) -> bool:
 
 
 async def collect(rt, since_ms: int, s) -> tuple[str, int]:
-    """Inbound messages since `since_ms`, grouped by chat. Returns (text, count).
-
-    Newest first within a chat, then reversed for reading order, so when a
-    conversation is truncated it is the OLD end that is dropped — the recent
-    turns are the ones an ask is likely to be in.
-    """
     book = rt.contacts
     self_user = (getattr(rt.wa, "self_jid", "") or "").split("@")[0].split(":")[0]
     lines, total, size = [], 0, 0
@@ -124,7 +89,6 @@ async def collect(rt, since_ms: int, s) -> tuple[str, int]:
         rows = [m for m in await rt.store.get_messages(chat.chat_jid, limit=60)
                 if not m.is_from_me and m.text and m.ts > since_ms]
         if chat.is_group:
-            # A group is a podium. Only what is aimed at you belongs here.
             keep = []
             for m in rows:
                 if await addressed_to_me(rt, m, self_user):
@@ -147,7 +111,6 @@ async def collect(rt, since_ms: int, s) -> tuple[str, int]:
 
 
 async def build(rt, since_ms: int) -> tuple[str, int]:
-    """The digest text, or ("", 0) when there is nothing to say."""
     s = rt.trigger.settings
     body, count = await collect(rt, since_ms, s)
     if not count:
@@ -162,9 +125,6 @@ async def build(rt, since_ms: int) -> tuple[str, int]:
         me_name=getattr(rt.wa, "push_name", "") or "you",
         important=important, body=body)
 
-    # The digest is built by the model backend even when replies run through a
-    # webhook: summarising is this server's own job, not something to hand to
-    # someone else's endpoint, and it needs no tools.
     ctx = Context(message=prompt, chat_name="", chat_jid="", sender_name="",
                   sender_jid="", me_name=getattr(rt.wa, "push_name", "") or "you",
                   message_id="", timestamp=str(int(time.time())), history=[])
@@ -178,7 +138,6 @@ async def build(rt, since_ms: int) -> tuple[str, int]:
 
 
 async def run_once(rt) -> str | None:
-    """Build and send one digest. Returns where it went, or None."""
     s = rt.trigger.settings
     if not s.summary.configured or not s.model.configured:
         return None
@@ -195,8 +154,6 @@ async def run_once(rt) -> str | None:
     except BackendError as exc:
         log.warning("summary not built: %s", exc)
         return None
-    # The clock advances even with nothing to report, so a quiet hour does not
-    # make the next digest cover two.
     await rt.store.put_kv(STATE_KEY, {"at": now})
     if not count or not text.strip():
         return None
@@ -214,11 +171,6 @@ async def run_once(rt) -> str | None:
 
 
 async def loop(rt) -> None:
-    """Wake on the shortest sensible tick and run when due.
-
-    Polls rather than sleeping for the whole interval so that changing it in
-    settings takes effect now, instead of after the old interval finishes.
-    """
     while True:
         try:
             s = rt.trigger.settings if rt.trigger else None
