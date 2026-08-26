@@ -69,7 +69,7 @@ personal-whatsapp-mcp = "wa_mcp.__main__:main"
 include = ["wa_mcp*"]
 
 [tool.setuptools.package-data]
-wa_mcp = ["py.typed"]
+wa_mcp = ["py.typed", "static/*.png"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

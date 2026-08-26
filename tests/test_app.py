@@ -505,20 +505,43 @@ async def test_a_profile_failure_is_reported_not_swallowed(client, monkeypatch):
 
 def test_every_page_shell_points_at_a_favicon():
     """Without one, a browser asks the host for /favicon.ico and shows nothing
-    when that 404s — so the tab, and a connector card that borrows the same
-    icon, fell back to the bare domain."""
+    when that 404s — so the tab fell back to identifying the app by whatever
+    domain it happened to be tunnelled through."""
     from wa_mcp import web
 
-    assert web.FAVICON.lstrip().startswith("<svg")
     assert 'rel="icon"' in web._page("Any", "<p>x</p>")
-
-    # index and settings write their own shell rather than going through _page
     for name in ("wa_mcp/web.py", "wa_mcp/settings_ui.py"):
         assert 'rel="icon"' in pathlib.Path(name).read_text(), name
 
 
-async def test_the_favicon_route_serves_an_svg(client):
-    r = await client.get("/favicon.svg")
+def test_the_icons_ship_inside_the_package():
+    """Served from package data, not from the repo. assets/ is not in the
+    wheel, so reading the icon from there works in a source checkout and 404s
+    for everyone who pip installed it."""
+    from importlib.resources import files
+
+    for name in ("favicon.png", "apple-touch-icon.png"):
+        blob = (files("wa_mcp") / "static" / name).read_bytes()
+        assert blob.startswith(b"\x89PNG"), name
+        assert len(blob) < 60_000, f"{name} is {len(blob)} bytes — too big to serve"
+
+
+async def test_the_icon_routes_serve_their_own_file(client):
+    """Both routes point at one handler. It has to tell them apart — reading
+    the name from path_params gives an empty dict for a static route, so the
+    apple icon quietly served the small one."""
+    seen = {}
+    for name in ("favicon.png", "apple-touch-icon.png"):
+        r = await client.get(f"/{name}")
+        assert r.status_code == 200, name
+        assert r.headers["content-type"].startswith("image/png"), name
+        seen[name] = len(r.content)
+    assert seen["favicon.png"] != seen["apple-touch-icon.png"], \
+        "both routes served the same image"
+
+
+async def test_the_icon_needs_no_token(client):
+    """An icon behind authentication cannot load on the page that asks you to
+    authenticate."""
+    r = await client.get("/favicon.png")
     assert r.status_code == 200
-    assert r.headers["content-type"].startswith("image/svg+xml")
-    assert r.text.lstrip().startswith("<svg")
