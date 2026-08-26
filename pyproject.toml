@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "personal-whatsapp-mcp"
 version = "0.2.0"
-description = "WhatsApp for any LLM: an MCP server, a web UI, and a configurable auto-reply — one number, one process."
+description = "Self-hosted WhatsApp MCP server: connect your personal WhatsApp number to Claude, ChatGPT or any LLM, with a web UI and configurable auto-reply."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -17,8 +17,10 @@ authors = [
     { name = "Affaan Jaweed", email = "deadlyplatinum@gmail.com" },
     { name = "Yangala Vamsi Krishna", email = "vamsikrishna8595@gmail.com" },
 ]
-keywords = ["whatsapp", "mcp", "model context protocol", "llm", "agent",
-            "chatbot", "auto-reply", "whatsmeow", "neonize"]
+keywords = ["whatsapp", "mcp", "mcp-server", "model context protocol", "llm",
+            "claude", "chatgpt", "openai", "agent", "chatbot", "auto-reply",
+            "whatsapp-bot", "whatsapp-api", "whatsapp-automation", "self-hosted",
+            "whatsmeow", "neonize"]
 
 classifiers = [
     "Development Status :: 4 - Beta",
